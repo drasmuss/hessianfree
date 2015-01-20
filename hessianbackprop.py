@@ -120,13 +120,16 @@ class HessianBackprop(object):
 
         self.outer_sum = outer_sum
 
-    def init_weights(self):
+    def init_weights(self, dtype=np.float32):
         """Weight initialization"""
+        if self.debug and dtype != np.float64:
+            print "Changing weights to 64bit precision for debugging"
+            dtype = np.float64
 
         # sparse initialization (from martens)
         num_conn = 15
         W = [np.zeros((self.layers[i] + 1, self.layers[i + 1]),
-                      dtype=np.float32)
+                      dtype=dtype)
              for i in range(self.n_layers - 1)]
         for l in range(self.n_layers - 1):
             for j in range(self.layers[l + 1]):
@@ -139,7 +142,7 @@ class HessianBackprop(object):
         self.W = np.concatenate([w.flatten() for w in W])
 
         # random initialization
-#         self.W = np.zeros(np.sum(self.n_params), dtype=np.float32)
+#         self.W = np.zeros(np.sum(self.n_params), dtype=dtype)
 #         for i in range(self.n_layers - 1):
 #             offset = np.sum(self.n_params[:i])
 #             self.W[offset:offset + self.n_params[i]] = (
