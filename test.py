@@ -1,7 +1,10 @@
 import pickle
 
-from hessianbackprop import HessianBackprop
 import numpy as np
+import matplotlib.pyplot as plt
+
+from hessianbackprop import HessianBackprop
+from hessianrnn import HessianRNN
 
 
 def test_xor():
@@ -56,6 +59,39 @@ def test_profile():
     p.strip_dirs().sort_stats('time').print_stats(20)
 
 
+def test_integrator():
+    n_inputs = 100
+    sig_len = 100
+    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                      np.ones(sig_len))[:, :, None]
+    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                       np.linspace(0, 1, sig_len))[:, :, None]
+    inputs = inputs.astype(np.float32)
+    targets = targets.astype(np.float32)
+
+    test = (inputs, targets)
+
+    rnn = HessianRNN(layers=[1, 100, 1], struc_damping=0.5,
+                     use_GPU=False, debug=False)
+
+    rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
+                    test=test, max_epochs=100,
+                    load_weights=None, plotting=True)
+
+    plt.figure()
+    plt.plot(inputs.squeeze().T)
+
+    plt.figure()
+    plt.plot(targets.squeeze().T)
+
+    outputs = rnn.forward(inputs, rnn.W)[-1]
+    plt.figure()
+    plt.plot(outputs.squeeze())
+
+    plt.show()
+
+
 test_xor()
 # test_mnist()
 # test_profile()
+# test_integrator()

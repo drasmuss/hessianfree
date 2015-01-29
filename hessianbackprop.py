@@ -1,4 +1,4 @@
-"""Implementation of Hessian-free optimization.
+"""Implementation of Hessian-free optimization for feedforward networks.
 
 Author: Daniel Rasmussen (drasmussen@princeton.edu)
 
@@ -13,7 +13,6 @@ http://www.cs.toronto.edu/~jmartens/research.html
 import pickle
 
 from scipy.special import expit
-
 import numpy as np
 
 try:
