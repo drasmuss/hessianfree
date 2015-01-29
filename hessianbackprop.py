@@ -21,8 +21,8 @@ try:
     import pycuda.driver as drv
     from pycuda.compiler import SourceModule
     from pycuda import gpuarray
-except ImportError:
-    print "PyCuda not installed, cannot use GPU acceleration"
+except:
+    print "PyCuda not installed, or no compatible device detected"
 
 
 class HessianBackprop(object):
@@ -34,14 +34,20 @@ class HessianBackprop(object):
         self.n_params = [0 for _ in range(self.n_layers - 1)]
         for i in range(self.n_layers - 1):
             self.n_params[i] += (self.layers[i] + 1) * self.layers[i + 1]
+        self.inputs = None
+        self.targets = None
 
         self.init_weights()
 
         if use_GPU:
             self.init_GPU()
         else:
-            def outer_sum(a, b, out):
-                out[:] = np.ravel(np.einsum("ij,ik", a, b))
+            def outer_sum(a, b, out=None):
+                if out is None:
+                    return np.ravel(np.einsum("ij,ik", a, b))
+                else:
+                    out[:] = np.ravel(np.einsum("ij,ik", a, b))
+                    return out
             self.outer_sum = outer_sum
 
     def init_GPU(self):
@@ -73,10 +79,13 @@ class HessianBackprop(object):
         }
         """)
 
-        def outer_sum(a, b, out):
+        def outer_sum(a, b, out=None):
             a_len = np.int32(a.shape[1])
             b_len = np.int32(b.shape[1])
             batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
+
+            if out is None:
+                out = np.zeros(a_len * b_len, dtype=np.float32)
 
             assert a.dtype == b.dtype == out.dtype == np.float32
             assert b_len < self.num_threads
@@ -118,10 +127,13 @@ class HessianBackprop(object):
                     print out - truth
                     raise
 
+            return out
+
         self.outer_sum = outer_sum
 
     def init_weights(self, dtype=np.float32):
         """Weight initialization"""
+
         if self.debug and dtype != np.float64:
             print "Changing weights to 64bit precision for debugging"
             dtype = np.float64
@@ -150,21 +162,28 @@ class HessianBackprop(object):
 #                                   1 / np.sqrt(self.layers[i]),
 #                                   self.n_params[i]))
 
+    def get_offsets(self, layer):
+        """Compute offsets for given layer in the overall parameter vector."""
+
+        offset = np.sum(self.n_params[:layer])
+        return (offset,
+                offset + self.layers[layer] * self.layers[layer + 1],
+                offset + self.n_params[layer])
+
     def get_layer(self, params, layer, separate=True):
         """Get weight matrix for a layer from the overall parameter vector."""
 
-        offset = np.sum(self.n_params[:layer])
-        l_params = params[offset:offset + self.n_params[layer]]
+        offset, W_end, b_end = self.get_offsets(layer)
         if separate:
-            W = l_params[:-self.layers[layer + 1]]
-            b = l_params[-self.layers[layer + 1]:]
+            W = params[offset:W_end]
+            b = params[W_end:b_end]
 
             return (W.reshape((self.layers[layer],
                                self.layers[layer + 1])),
                     b)
         else:
-            return l_params.reshape((self.layers[layer] + 1,
-                                     self.layers[layer + 1]))
+            return params[offset:b_end].reshape((self.layers[layer] + 1,
+                                                 self.layers[layer + 1]))
 
     def forward(self, input, params):
         """Compute feedforward activations for given input and parameters."""
@@ -184,7 +203,8 @@ class HessianBackprop(object):
         inputs = self.inputs if inputs is None else inputs
         targets = self.targets if targets is None else targets
 
-        if W is self.W and inputs is self.inputs:
+        if (self.activations is not None and
+            W is self.W and inputs is self.inputs):
             # use cached activations
             outputs = self.activations[-1]
         else:
@@ -223,19 +243,15 @@ class HessianBackprop(object):
             delta = d_activations[i] * error
             error = np.dot(delta, self.get_layer(W, i - 1)[0].T)
 
-            offset = np.sum(self.n_params[:i - 1])
-            W_offset = offset + self.layers[i - 1] * self.layers[i]
+            offset, W_end, b_end = self.get_offsets(i - 1)
+            self.outer_sum(activations[i - 1], delta, out=grad[offset:W_end])
+            np.sum(delta, axis=0, out=grad[W_end:b_end])
 
-            self.outer_sum(activations[i - 1], delta,
-                           out=grad[offset:W_offset])
-            np.sum(delta, axis=0,
-                   out=grad[W_offset:W_offset + self.layers[i]])
-
-        grad /= len(inputs)
+        grad /= inputs.shape[0]
 
         return grad
 
-    def check_grads(self, calc_grad, inputs, targets):
+    def check_grad(self, calc_grad, inputs, targets):
         """Check gradient via finite differences (for debugging)."""
 
         eps = 1e-4
@@ -254,11 +270,12 @@ class HessianBackprop(object):
         try:
             assert np.allclose(grad,
                                calc_grad,
-                               rtol=1e-2)
+                               atol=1e-4)
         except AssertionError:
-            print i
-            print (error_inc - error_dec) / (2 * eps)
-            print calc_grad[i]
+            print calc_grad
+            print grad
+            print calc_grad - grad
+            print calc_grad / grad
             raise
 
     def gradient_descent(self, inputs, targets, l_rate=1):
@@ -271,14 +288,15 @@ class HessianBackprop(object):
         self.activations = self.forward(self.inputs, self.W)
         self.d_activations = [a * (1 - a) for a in self.activations]
 
-        grads = self.calc_grad()
+        grad = self.calc_grad()
 
-        self.check_grads(grads, inputs, targets)
+        if self.debug:
+            self.check_grad(grad, inputs, targets)
 
         # update weights
-        self.W -= l_rate * grads
+        self.W -= l_rate * grad
 
-    def check_G(self, calc_G, inputs, targets, v):
+    def check_G(self, calc_G, inputs, targets, v, damping=0):
         """Check Gv calculation via finite differences (for debugging)."""
 
         eps = 1e-6
@@ -287,23 +305,21 @@ class HessianBackprop(object):
         g = np.zeros(N)
         for input in inputs:
             base = self.forward(input, self.W)[-1]
-            if base.size != 1:
-                # could make this work, but I'm lazy
-                print "check_G only works for 1D output"
-                return
 
-            J = np.zeros(N)
+            J = np.zeros((base.size, N))
             for i in range(N):
                 inc_i = np.zeros(N)
                 inc_i[i] = eps
 
-                J[i] = (self.forward(input, self.W + inc_i)[-1] - base) / eps
+                J[:, i] = (self.forward(input, self.W + inc_i)[-1] - base) / eps
 
-            L = np.eye(N)  # true when using rms
+            L = np.eye(base.size)  # true when using rms
 
-            g += np.dot(np.outer(J, np.dot(L, J)), v)
+            g += np.dot(np.dot(J.T, np.dot(L, J)), v)
 
-        g = g / len(inputs)
+        g /= inputs.shape[0]
+
+        g += damping * v
 
         try:
             assert np.allclose(g, calc_G, rtol=0.01)
@@ -338,17 +354,15 @@ class HessianBackprop(object):
 
             R_error = np.dot(R_delta, Ws[i - 1].T)
 
-            offset = np.sum(self.n_params[:i - 1])
-            W_offset = offset + self.layers[i - 1] * self.layers[i]
+            offset, W_end, b_end = self.get_offsets(i - 1)
 
             if self.use_GPU:
                 self.outer_sum(self.GPU_activations[i - 1], R_delta,
-                               out=Gv[offset:W_offset])
+                               out=Gv[offset:W_end])
             else:
                 self.outer_sum(self.activations[i - 1], R_delta,
-                               out=Gv[offset:W_offset])
-            np.sum(R_delta, axis=0,
-                   out=Gv[W_offset:W_offset + self.layers[i]])
+                               out=Gv[offset:W_end])
+            np.sum(R_delta, axis=0, out=Gv[W_end:b_end])
 
         Gv /= len(self.inputs)
 
@@ -371,14 +385,6 @@ class HessianBackprop(object):
         res_norm = np.dot(residual, residual)
         direction = residual.copy()
 
-        if self.debug:
-            try:
-                self.check_G(self.G(direction, damping=0),
-                             self.inputs, self.targets, direction)
-            except AssertionError:
-                print "CHECK_G FAILED"
-                raise
-
         for i in range(iters):
             if self.debug:
                 print "-" * 20
@@ -394,6 +400,9 @@ class HessianBackprop(object):
             if self.debug:
                 print "step", step
 
+                self.check_G(G_dir, self.inputs, self.targets,
+                             direction, self.damping)
+
                 assert np.isfinite(step)
                 assert step >= 0
                 assert (np.linalg.norm(np.dot(direction, G_dir)) >=
@@ -406,6 +415,13 @@ class HessianBackprop(object):
             # update residual
             residual -= step * G_dir
             new_res_norm = np.dot(residual, residual)
+
+            if new_res_norm < 1e-20:
+                # early termination (mainly to prevent numerical errors);
+                # if this ever triggers, it's probably because the minimum
+                # gap in the normal termination condition (below) is too low.
+                # this only occurs on really simple problems
+                break
 
             # update direction
             beta = new_res_norm / res_norm
@@ -436,9 +452,9 @@ class HessianBackprop(object):
 
         return deltas
 
-    def run_batches(self, inputs, targets, CG_iter=250, batch_size=None,
-                    test=None, load_weights=None, plotting=False,
-                    max_batches=10000):
+    def run_batches(self, inputs, targets, CG_iter=250, init_damping=1.0,
+                    max_epochs=1000, batch_size=None, test=None,
+                    load_weights=None, plotting=False):
         """Apply Hessian-free algorithm with a sequence of minibatches."""
 
         if self.debug:
@@ -454,7 +470,7 @@ class HessianBackprop(object):
             assert np.all([w.dtype == np.float32 for w in self.W])
 
         init_delta = np.zeros(self.W.size, dtype=np.float32)
-        self.damping = 45.0
+        self.damping = init_damping
         test_errs = []
 
         if plotting:
@@ -470,7 +486,7 @@ class HessianBackprop(object):
             with open("HF_plots.pkl", "wb") as f:
                 pickle.dump(plots, f)
 
-        for i in range(max_batches):
+        for i in range(max_epochs):
             if i % print_period == 0:
                 print "=" * 40
                 print "batch", i
@@ -565,6 +581,13 @@ class HessianBackprop(object):
             # update weights
             self.W += l_rate * delta
 
+            # invalidate cached activations (shouldn't be necessary,
+            # but doesn't hurt)
+            self.activations = None
+            self.d_activations = None
+            if self.use_GPU:
+                self.GPU_activations = None
+
             # compute test error
             if test is not None:
                 test_errs += [self.error(self.W, test[0], test[1])]
@@ -594,6 +617,9 @@ class HessianBackprop(object):
                     pickle.dump(self.W, f)
 
             # check for termination
+            if test_errs[-1] < 1e-6:
+                print "minimum error reached"
+                break
             if i > 20 and test_errs[-20] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break

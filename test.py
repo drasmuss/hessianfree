@@ -5,12 +5,12 @@ import numpy as np
 
 
 def test_xor():
-    bp = HessianBackprop([2, 5, 1])
+    bp = HessianBackprop([2, 5, 1], debug=True, use_GPU=False)
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    bp.run_batches(inputs, targets, CG_iter=5, max_batches=50,
+    bp.run_batches(inputs, targets, CG_iter=4, max_epochs=40,
                    plotting=True)
 
     # using gradient descent (for comparison)
@@ -42,7 +42,7 @@ def test_mnist():
     test = (test[0], tmp)
 
     bp.run_batches(inputs, targets, CG_iter=100, batch_size=7500,
-                   test=test, max_batches=1000,
+                   test=test, max_epochs=1000,
                    load_weights=None, plotting=True)
 
 
@@ -56,6 +56,6 @@ def test_profile():
     p.strip_dirs().sort_stats('time').print_stats(20)
 
 
-# test_xor()
-test_mnist()
+test_xor()
+# test_mnist()
 # test_profile()
