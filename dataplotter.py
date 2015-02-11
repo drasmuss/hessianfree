@@ -3,7 +3,8 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 
-with open("HF_plots.pkl", "rb") as f:
+filename = r"HF_plots.pkl"
+with open(filename, "rb") as f:
     plots = pickle.load(f)
 
 axes = []
@@ -15,7 +16,7 @@ for p in plots:
     lines += [plt.plot(plots[p])[0]]
 
 while True:
-    with open("HF_plots.pkl", "rb") as f:
+    with open(filename, "rb") as f:
         plots = pickle.load(f)
 
     for i, p in enumerate(plots):

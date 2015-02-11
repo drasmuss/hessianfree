@@ -45,8 +45,7 @@ def test_mnist():
     test = (test[0], tmp)
 
     bp.run_batches(inputs, targets, CG_iter=100, batch_size=7500,
-                   test=test, max_epochs=1000,
-                   load_weights=None, plotting=True)
+                   test=test, max_epochs=1000, plotting=True)
 
 
 def test_profile():
@@ -75,8 +74,7 @@ def test_integrator():
                      use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
-                    test=test, max_epochs=100,
-                    load_weights=None, plotting=True)
+                    test=test, max_epochs=100, plotting=True)
 
     plt.figure()
     plt.plot(inputs.squeeze().T)

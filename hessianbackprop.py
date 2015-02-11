@@ -25,7 +25,8 @@ except:
 
 
 class HessianBackprop(object):
-    def __init__(self, layers=[1, 1, 1], use_GPU=False, debug=False):
+    def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
+                 debug=False):
         self.use_GPU = use_GPU
         self.debug = debug
         self.n_layers = len(layers)
@@ -36,7 +37,13 @@ class HessianBackprop(object):
         self.inputs = None
         self.targets = None
 
-        self.init_weights()
+        if load_weights is not None:
+            # load weights from file
+            with open(load_weights, "rb") as f:
+                self.W = pickle.load(f)
+            assert self.W.dtype == np.float32
+        else:
+            self.init_weights()
 
         if use_GPU:
             self.init_GPU()
@@ -453,7 +460,7 @@ class HessianBackprop(object):
 
     def run_batches(self, inputs, targets, CG_iter=250, init_damping=1.0,
                     max_epochs=1000, batch_size=None, test=None,
-                    load_weights=None, plotting=False):
+                    plotting=False):
         """Apply Hessian-free algorithm with a sequence of minibatches."""
 
         if self.debug:
@@ -461,12 +468,6 @@ class HessianBackprop(object):
             np.seterr(all="raise")
         else:
             print_period = 10
-
-        if load_weights is not None:
-            # load weights from file
-            with open(load_weights, "rb") as f:
-                self.W = pickle.load(f)
-            assert np.all([w.dtype == np.float32 for w in self.W])
 
         init_delta = np.zeros(self.W.size, dtype=np.float32)
         self.damping = init_damping
@@ -595,12 +596,6 @@ class HessianBackprop(object):
 
             if i % print_period == 0:
                 print "test error", test_errs[-1]
-                if test is not None:
-                    output = self.forward(test[0], self.W)[-1]
-                    class_err = (np.sum(np.argmax(output, axis=1) !=
-                                        np.argmax(test[1], axis=1))
-                                 / float(len(test[0])))
-                    print "classification error", class_err
 
             # dump plot data
             if plotting:
