@@ -40,7 +40,10 @@ class HessianRNN(HessianBackprop):
 
         activations = [np.zeros((input.shape[1],
                                  input.shape[0],
-                                 self.layers[i]), dtype=np.float32)
+                                 self.layers[i]),
+                                dtype=(np.float32
+                                       if not self.debug else
+                                       np.float64))
                        for i in [0, 1, 3]]
         W_in, b_in = self.get_layer(params, 0)
         W_rec, b_rec = self.get_layer(params, 1)
@@ -58,6 +61,7 @@ class HessianRNN(HessianBackprop):
                 rec_input = np.dot(activations[1][s - 1], W_rec)
             else:
                 rec_input = b_rec
+
             activations[1][s] = expit(ff_input + rec_input)
 
             # output activations
@@ -156,8 +160,8 @@ class HessianRNN(HessianBackprop):
         for b in range(inputs.shape[0]):
             acts = self.forward(inputs[b], self.W)
 
-            assert acts[2].shape[2] == 1
             # check_G only works for 1D output at the moment
+            assert acts[2].shape[2] == 1
 
             base = np.concatenate((acts[2].squeeze(axis=(1, 2)),
                                    acts[1][-1].squeeze(axis=0)))

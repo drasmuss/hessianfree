@@ -13,7 +13,7 @@ def test_xor():
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    bp.run_batches(inputs, targets, CG_iter=4, max_epochs=40,
+    bp.run_batches(inputs, targets, CG_iter=3, max_epochs=40,
                    plotting=True)
 
     # using gradient descent (for comparison)
@@ -59,8 +59,8 @@ def test_profile():
 
 
 def test_integrator():
-    n_inputs = 100
-    sig_len = 100
+    n_inputs = 10
+    sig_len = 50
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -70,7 +70,7 @@ def test_integrator():
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(layers=[1, 100, 1], struc_damping=0.5,
+    rnn = HessianRNN(layers=[1, 10, 1], struc_damping=0.0,
                      use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
