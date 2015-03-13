@@ -47,6 +47,12 @@ def test_mnist():
     bp.run_batches(inputs, targets, CG_iter=100, batch_size=7500,
                    test=test, max_epochs=1000, plotting=True)
 
+    output = bp.forward(test[0], bp.W)[-1]
+    class_err = (np.sum(np.argmax(output, axis=1) !=
+                        np.argmax(test[1], axis=1))
+                 / float(len(test[0])))
+    print "classification error", class_err
+
 
 def test_profile():
     np.random.seed(0)
@@ -71,6 +77,7 @@ def test_integrator():
     test = (inputs, targets)
 
     rnn = HessianRNN(layers=[1, 10, 1], struc_damping=0.0,
+                     neuron_types="logistic",
                      use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,

@@ -9,7 +9,6 @@ Machine Learning.
 """
 
 import numpy as np
-from scipy.special import expit
 
 from hessianbackprop import HessianBackprop
 
@@ -25,6 +24,10 @@ class HessianRNN(HessianBackprop):
         self.struc_damping = struc_damping
 
         super(HessianRNN, self).__init__(**kwargs)
+
+        # cut out the extra activation function if it was generated in super
+        self.act = [self.act[0], self.act[-2], self.act[-1]]
+        self.deriv = [self.deriv[0], self.deriv[-2], self.deriv[-1]]
 
     def forward(self, input, params):
         """Compute activations for given input sequence."""
@@ -51,8 +54,7 @@ class HessianRNN(HessianBackprop):
 
         for s in range(input.shape[1]):
             # input activations
-            activations[0][s] = input[:, s]
-            # TODO: save memory by not storing inputs twice
+            activations[0][s] = self.act[0](input[:, s])
 
             # recurrent activations
             ff_input = np.dot(activations[0][s], W_in) + b_in
@@ -61,11 +63,11 @@ class HessianRNN(HessianBackprop):
                 rec_input = np.dot(activations[1][s - 1], W_rec)
             else:
                 rec_input = b_rec
-
-            activations[1][s] = expit(ff_input + rec_input)
+            activations[1][s] = self.act[1](ff_input + rec_input)
 
             # output activations
-            activations[2][s] = expit(np.dot(activations[1][s], W_out) + b_out)
+            activations[2][s] = self.act[2](np.dot(activations[1][s], W_out) +
+                                             b_out)
 
         return activations
 
@@ -95,7 +97,8 @@ class HessianRNN(HessianBackprop):
         else:
             # compute activations
             activations = self.forward(inputs, W)
-            d_activations = [a * (1 - a) for a in activations]
+            d_activations = [self.deriv[i](a)
+                             for i, a in enumerate(activations)]
 
         grad = np.zeros(W.size, dtype=np.float32)
         rec_delta = np.zeros((inputs.shape[0], self.layers[1]),
@@ -107,8 +110,8 @@ class HessianRNN(HessianBackprop):
             if isinstance(activations[2], np.ndarray):
                 error = activations[2][s] - targets[:, s]
             else:
-                # then it's a GPU activation, which we don't want to use
-                # for this calculation
+                # then it's a GPU array, so use the non-GPU version (we don't
+                # want to do this on the GPU)
                 error = self.activations[2][s] - targets[:, s]
 
             delta = d_activations[2][s] * error
@@ -146,8 +149,6 @@ class HessianRNN(HessianBackprop):
 
     def check_G(self, calc_G, inputs, targets, v, damping=0):
         """Check Gv calculation via finite differences (for debugging)."""
-
-        # TODO: find a way to merge this with super check_G
 
         # TODO: get struc_damping check to work
         assert self.struc_damping == 0

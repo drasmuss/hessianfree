@@ -26,7 +26,7 @@ except:
 
 class HessianBackprop(object):
     def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
-                 debug=False):
+                 debug=False, neuron_types="logistic"):
         self.use_GPU = use_GPU
         self.debug = debug
         self.n_layers = len(layers)
@@ -37,10 +37,32 @@ class HessianBackprop(object):
         self.inputs = None
         self.targets = None
 
+        if isinstance(neuron_types, str):
+            neuron_types = [neuron_types for _ in range(self.n_layers)]
+            neuron_types[0] = "linear"
+
+        self.act = []
+        self.deriv = []
+        for t in neuron_types:
+            if t == "logistic":
+                self.act += [expit]
+                self.deriv += [lambda x: x * (1 - x)]
+            elif t == "tanh":
+                self.act += [np.tanh]
+                self.deriv += [lambda x: 1 - x ** 2]
+            elif t == "linear":
+                self.act += [lambda x: x]
+                self.deriv += [np.ones_like]
+            else:
+                raise ValueError("Unknown neuron type (%s)" % t)
+
         if load_weights is not None:
-            # load weights from file
-            with open(load_weights, "rb") as f:
-                self.W = pickle.load(f)
+            if isinstance(load_weights, np.ndarray):
+                self.W = load_weights
+            else:
+                # load weights from file
+                with open(load_weights, "rb") as f:
+                    self.W = pickle.load(f)
             assert self.W.dtype == np.float32
         else:
             self.init_weights()
@@ -195,10 +217,10 @@ class HessianBackprop(object):
         """Compute feedforward activations for given input and parameters."""
 
         activations = [None for _ in range(self.n_layers)]
-        activations[0] = input
+        activations[0] = self.act[0](input)
         for i in range(self.n_layers - 1):
             W, b = self.get_layer(params, i)
-            activations[i + 1] = expit(np.dot(activations[i], W) + b)
+            activations[i + 1] = self.act[i + 1](np.dot(activations[i], W) + b)
 
         return activations
 
@@ -239,7 +261,8 @@ class HessianBackprop(object):
         else:
             # compute activations
             activations = self.forward(inputs, W)
-            d_activations = [a * (1 - a) for a in activations]
+            d_activations = [self.deriv[i](a)
+                             for i, a in enumerate(activations)]
             error = activations[-1] - targets
 
         grad = np.zeros(W.size, dtype=np.float32)
@@ -292,7 +315,8 @@ class HessianBackprop(object):
 
         # calculate gradients
         self.activations = self.forward(self.inputs, self.W)
-        self.d_activations = [a * (1 - a) for a in self.activations]
+        self.d_activations = [self.deriv[i](a)
+                              for i, a in enumerate(self.activations)]
 
         grad = self.calc_grad()
 
@@ -460,7 +484,7 @@ class HessianBackprop(object):
 
     def run_batches(self, inputs, targets, CG_iter=250, init_damping=1.0,
                     max_epochs=1000, batch_size=None, test=None,
-                    plotting=False):
+                    target_err=1e-6, plotting=False):
         """Apply Hessian-free algorithm with a sequence of minibatches."""
 
         if self.debug:
@@ -503,7 +527,8 @@ class HessianBackprop(object):
 
             # cache activations
             self.activations = self.forward(self.inputs, self.W)
-            self.d_activations = [a * (1 - a) for a in self.activations]
+            self.d_activations = [self.deriv[j](a)
+                                  for j, a in enumerate(self.activations)]
 
             if self.use_GPU:
                 self.GPU_activations = [gpuarray.to_gpu(a)
@@ -611,8 +636,8 @@ class HessianBackprop(object):
                     pickle.dump(self.W, f)
 
             # check for termination
-            if test_errs[-1] < 1e-6:
-                print "minimum error reached"
+            if test_errs[-1] < target_err:
+                print "target error reached"
                 break
             if i > 20 and test_errs[-20] < test_errs[-1]:
                 print "overfitting detected, terminating"
