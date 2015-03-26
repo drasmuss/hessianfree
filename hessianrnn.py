@@ -10,10 +10,10 @@ Machine Learning.
 
 import numpy as np
 
-from hessianbackprop import HessianBackprop
+from hessianff import HessianFF
 
 
-class HessianRNN(HessianBackprop):
+class HessianRNN(HessianFF):
     def __init__(self, struc_damping=0.0, **kwargs):
         # pretend that there are two hidden layers so that we get the
         # recurrent weight matrix

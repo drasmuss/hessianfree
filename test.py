@@ -3,12 +3,12 @@ import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 
-from hessianbackprop import HessianBackprop
+from hessianff import HessianFF
 from hessianrnn import HessianRNN
 
 
 def test_xor():
-    bp = HessianBackprop([2, 5, 1], debug=True, use_GPU=False)
+    bp = HessianFF([2, 5, 1], debug=True, use_GPU=False)
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
@@ -33,7 +33,7 @@ def test_mnist():
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
 
-    bp = HessianBackprop([28 * 28, 1000, 500, 250, 30, 10], use_GPU=True,
+    bp = HessianFF([28 * 28, 1000, 500, 250, 30, 10], use_GPU=True,
                          debug=False)
 
     inputs = train[0]

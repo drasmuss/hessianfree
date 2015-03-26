@@ -24,7 +24,7 @@ except:
     print "PyCuda not installed, or no compatible device detected"
 
 
-class HessianBackprop(object):
+class HessianFF(object):
     def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
                  debug=False, neuron_types="logistic"):
         self.use_GPU = use_GPU
