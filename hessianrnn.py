@@ -114,6 +114,8 @@ class HessianRNN(HessianFF):
                 # want to do this on the GPU)
                 error = self.activations[2][s] - targets[:, s]
 
+            error = np.nan_to_num(error)  # zero error where target==nan
+
             delta = d_activations[2][s] * error
 
             offset, W_end, b_end = self.get_offsets(2)

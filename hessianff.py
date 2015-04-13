@@ -239,7 +239,7 @@ class HessianFF(object):
             # compute activations
             outputs = self.forward(inputs, W)[-1]
 
-        error = np.sum((outputs - targets) ** 2)
+        error = np.sum(np.nan_to_num(outputs - targets) ** 2)
         error /= 2 * len(inputs)
 
         return error
@@ -264,6 +264,9 @@ class HessianFF(object):
             d_activations = [self.deriv[i](a)
                              for i, a in enumerate(activations)]
             error = activations[-1] - targets
+
+        # translate any nans (generated when target == nan) to zero error
+        error = np.nan_to_num(error)
 
         grad = np.zeros(W.size, dtype=np.float32)
 
@@ -639,6 +642,6 @@ class HessianFF(object):
             if test_errs[-1] < target_err:
                 print "target error reached"
                 break
-            if i > 20 and test_errs[-20] < test_errs[-1]:
+            if i > 20 and test_errs[-10] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break
