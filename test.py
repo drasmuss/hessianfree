@@ -8,12 +8,12 @@ from hessianrnn import HessianRNN
 
 
 def test_xor():
-    bp = HessianFF([2, 5, 1], debug=True, use_GPU=False)
+    ff = HessianFF([2, 5, 1], debug=True, use_GPU=False)
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    bp.run_batches(inputs, targets, CG_iter=3, max_epochs=40,
+    ff.run_batches(inputs, targets, CG_iter=2, max_epochs=40,
                    plotting=True)
 
     # using gradient descent (for comparison)
@@ -25,7 +25,7 @@ def test_xor():
     for i, t in zip(inputs, targets):
         print "input", i
         print "target", t
-        print "output", bp.forward(i, bp.W)[-1]
+        print "output", ff.forward(i, ff.W)[-1]
 
 
 def test_mnist():
@@ -33,8 +33,8 @@ def test_mnist():
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
 
-    bp = HessianFF([28 * 28, 1000, 500, 250, 30, 10], use_GPU=True,
-                         debug=False)
+    ff = HessianFF([28 * 28, 1000, 500, 250, 30, 10], use_GPU=True,
+                   debug=False)
 
     inputs = train[0]
     targets = np.ones((inputs.shape[0], 10), dtype=np.float32) * 0.1
@@ -44,10 +44,10 @@ def test_mnist():
     tmp[np.arange(test[0].shape[0]), test[1]] = 0.9
     test = (test[0], tmp)
 
-    bp.run_batches(inputs, targets, CG_iter=100, batch_size=7500,
+    ff.run_batches(inputs, targets, CG_iter=100, batch_size=7500,
                    test=test, max_epochs=1000, plotting=True)
 
-    output = bp.forward(test[0], bp.W)[-1]
+    output = ff.forward(test[0], ff.W)[-1]
     class_err = (np.sum(np.argmax(output, axis=1) !=
                         np.argmax(test[1], axis=1))
                  / float(len(test[0])))
@@ -82,6 +82,12 @@ def test_integrator():
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
                     test=test, max_epochs=100, plotting=True)
+
+    # using gradient descent (for comparison)
+#     for i in range(10000):
+#         if i % 100 == 0:
+#             print "iteration", i
+#         rnn.gradient_descent(inputs, targets, l_rate=0.1)
 
     plt.figure()
     plt.plot(inputs.squeeze().T)

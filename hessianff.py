@@ -523,7 +523,8 @@ class HessianFF(object):
                 self.inputs = inputs
                 self.targets = targets
             else:
-                indices = np.random.randint(len(inputs), size=batch_size)
+                indices = np.random.choice(np.arange(len(inputs)),
+                                           size=batch_size, replace=False)
                 self.inputs = inputs[indices]
                 self.targets = targets[indices]
             assert self.inputs.dtype == self.targets.dtype == np.float32

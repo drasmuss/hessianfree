@@ -130,7 +130,8 @@ class HessianRNN(HessianFF):
             offset, W_end, b_end = self.get_offsets(1)
             if s > 0:
                 # if s == 0 then the previous recurrent activations are zero,
-                # so the gradient is zero
+                # so the gradient is zero (the gradient for the initial bias
+                # is taken care of below)
                 grad[offset:W_end] += self.outer_sum(activations[1][s - 1],
                                                      rec_delta)
 
