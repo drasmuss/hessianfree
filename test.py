@@ -1,4 +1,5 @@
 import pickle
+import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -101,8 +102,10 @@ def test_integrator():
 
     plt.show()
 
-
-test_xor()
-# test_mnist()
-# test_profile()
-# test_integrator()
+if len(sys.argv) < 2:
+    test_xor()
+else:
+    try:
+        locals()["test_%s" % sys.argv[1]]()
+    except KeyError:
+        print "Unknown function (%s)" % sys.argv[1]

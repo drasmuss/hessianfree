@@ -8,4 +8,4 @@ of the 27th International Conference on Machine Learning.
 and Matlab code from James Martens available at
 http://www.cs.toronto.edu/~jmartens/research.html
 
-Run `python test.py` to get started.
+Run `python test.py xor` to get started.
