@@ -65,7 +65,7 @@ def test_profile():
 
 
 def test_integrator():
-    n_inputs = 10
+    n_inputs = 15
     sig_len = 50
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
@@ -76,7 +76,7 @@ def test_integrator():
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(layers=[1, 10, 1], struc_damping=0.0,
+    rnn = HessianRNN(layers=[1, 10, 10, 1], struc_damping=0.0,
                      neuron_types="logistic",
                      use_GPU=False, debug=False)
 

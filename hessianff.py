@@ -65,7 +65,9 @@ class HessianFF(object):
                     self.W = pickle.load(f)
             assert self.W.dtype == np.float32
         else:
-            self.init_weights()
+            self.W = self.init_weights([(self.layers[i] + 1,
+                                         self.layers[i + 1])
+                                        for i in range(len(self.layers) - 1)])
 
         if use_GPU:
             self.init_GPU()
@@ -159,8 +161,9 @@ class HessianFF(object):
 
         self.outer_sum = outer_sum
 
-    def init_weights(self, dtype=np.float32):
-        """Weight initialization"""
+    def init_weights(self, shapes, dtype=np.float32):
+        """Weight initialization, given shapes of weight matrices (including
+        bias row)."""
 
         if self.debug and dtype != np.float64:
             print "Changing weights to 64bit precision for debugging"
@@ -168,27 +171,29 @@ class HessianFF(object):
 
         # sparse initialization (from martens)
         num_conn = 15
-        W = [np.zeros((self.layers[i] + 1, self.layers[i + 1]),
-                      dtype=dtype)
-             for i in range(self.n_layers - 1)]
-        for l in range(self.n_layers - 1):
-            for j in range(self.layers[l + 1]):
+        W = [np.zeros(s, dtype=dtype) for s in shapes]
+        for i, s in enumerate(shapes):
+            for j in range(s[1]):
                 # pick num_conn random pre neurons
-                indices = np.ceil(np.random.rand(num_conn) * self.layers[l])
-                indices = indices.astype(int)
+                indices = np.random.choice(np.arange(s[0]),
+                                           size=min(num_conn, s[0]),
+                                           replace=False)
 
                 # connect to post
-                W[l][indices, j] = np.random.randn(num_conn)
-        self.W = np.concatenate([w.flatten() for w in W])
+                W[i][indices, j] = np.random.randn(indices.size)
+        W = np.concatenate([w.flatten() for w in W])
 
         # random initialization
-#         self.W = np.zeros(np.sum(self.n_params), dtype=dtype)
-#         for i in range(self.n_layers - 1):
-#             offset = np.sum(self.n_params[:i])
-#             self.W[offset:offset + self.n_params[i]] = (
-#                 np.random.uniform(-1 / np.sqrt(self.layers[i]),
-#                                   1 / np.sqrt(self.layers[i]),
-#                                   self.n_params[i]))
+#         n_params = [pre * post for pre, post in shapes]
+#         W = np.zeros(np.sum(n_params), dtype=dtype)
+#         for i, s in enumerate(shapes):
+#             offset = np.sum(n_params[:i])
+#             W[offset:offset + n_params[i]] = (
+#                 np.random.uniform(-1 / np.sqrt(s[0]),
+#                                   1 / np.sqrt(s[0]),
+#                                   n_params[i]))
+
+        return W
 
     def get_offsets(self, layer):
         """Compute offsets for given layer in the overall parameter vector."""
@@ -198,7 +203,7 @@ class HessianFF(object):
                 offset + self.layers[layer] * self.layers[layer + 1],
                 offset + self.n_params[layer])
 
-    def get_layer(self, params, layer, separate=True):
+    def get_weights(self, params, layer, separate=True):
         """Get weight matrix for a layer from the overall parameter vector."""
 
         offset, W_end, b_end = self.get_offsets(layer)
@@ -219,7 +224,7 @@ class HessianFF(object):
         activations = [None for _ in range(self.n_layers)]
         activations[0] = self.act[0](input)
         for i in range(self.n_layers - 1):
-            W, b = self.get_layer(params, i)
+            W, b = self.get_weights(params, i)
             activations[i + 1] = self.act[i + 1](np.dot(activations[i], W) + b)
 
         return activations
@@ -273,7 +278,7 @@ class HessianFF(object):
         # backpropagate error
         for i in range(self.n_layers - 1, 0, -1):
             delta = d_activations[i] * error
-            error = np.dot(delta, self.get_layer(W, i - 1)[0].T)
+            error = np.dot(delta, self.get_weights(W, i - 1)[0].T)
 
             offset, W_end, b_end = self.get_offsets(i - 1)
             self.outer_sum(activations[i - 1], delta, out=grad[offset:W_end])
@@ -369,12 +374,12 @@ class HessianFF(object):
         else:
             Gv = output
 
-        Ws = [self.get_layer(self.W, i)[0] for i in range(self.n_layers - 1)]
+        Ws = [self.get_weights(self.W, i)[0] for i in range(self.n_layers - 1)]
 
         # R forward pass
         R_activation = np.zeros(self.inputs.shape, dtype=np.float32)
         for i in range(self.n_layers - 1):
-            vw, vb = self.get_layer(v, i)
+            vw, vb = self.get_weights(v, i)
             R_input = np.dot(self.activations[i], vw) + vb
             R_input += np.dot(R_activation, Ws[i])
             R_activation = R_input * self.d_activations[i + 1]
