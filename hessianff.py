@@ -37,6 +37,8 @@ class HessianFF(object):
         self.inputs = None
         self.targets = None
 
+        self.compute_offsets()
+
         if isinstance(neuron_types, str):
             neuron_types = [neuron_types for _ in range(self.n_layers)]
             neuron_types[0] = "linear"
@@ -195,18 +197,21 @@ class HessianFF(object):
 
         return W
 
-    def get_offsets(self, layer):
-        """Compute offsets for given layer in the overall parameter vector."""
+    def compute_offsets(self):
+        """Precompute offsets for layers in the overall parameter vector."""
 
-        offset = np.sum(self.n_params[:layer])
-        return (offset,
-                offset + self.layers[layer] * self.layers[layer + 1],
-                offset + self.n_params[layer])
+        self.offsets = {}
+        for l in range(self.n_layers - 1):
+            offset = np.sum(self.n_params[:l])
+            self.offsets[l] = (
+                offset,
+                offset + self.layers[l] * self.layers[l + 1],
+                offset + self.n_params[l])
 
     def get_weights(self, params, layer, separate=True):
         """Get weight matrix for a layer from the overall parameter vector."""
 
-        offset, W_end, b_end = self.get_offsets(layer)
+        offset, W_end, b_end = self.offsets[layer]
         if separate:
             W = params[offset:W_end]
             b = params[W_end:b_end]
@@ -280,7 +285,7 @@ class HessianFF(object):
             delta = d_activations[i] * error
             error = np.dot(delta, self.get_weights(W, i - 1)[0].T)
 
-            offset, W_end, b_end = self.get_offsets(i - 1)
+            offset, W_end, b_end = self.offsets[i - 1]
             self.outer_sum(activations[i - 1], delta, out=grad[offset:W_end])
             np.sum(delta, axis=0, out=grad[W_end:b_end])
 
@@ -349,7 +354,8 @@ class HessianFF(object):
                 inc_i = np.zeros(N)
                 inc_i[i] = eps
 
-                J[:, i] = (self.forward(input, self.W + inc_i)[-1] - base) / eps
+                J[:, i] = (self.forward(input, self.W + inc_i)[-1] -
+                           base) / eps
 
             L = np.eye(base.size)  # true when using rms
 
@@ -392,7 +398,7 @@ class HessianFF(object):
 
             R_error = np.dot(R_delta, Ws[i - 1].T)
 
-            offset, W_end, b_end = self.get_offsets(i - 1)
+            offset, W_end, b_end = self.offsets[i - 1]
 
             if self.use_GPU:
                 self.outer_sum(self.GPU_activations[i - 1], R_delta,

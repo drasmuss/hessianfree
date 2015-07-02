@@ -21,7 +21,7 @@ def test_xor():
 #     for i in range(10000):
 #         if i % 100 == 0:
 #             print "iteration", i
-#         bp.gradient_descent(inputs, targets, l_rate=20)
+#         ff.gradient_descent(inputs, targets, l_rate=1)
 
     for i, t in zip(inputs, targets):
         print "input", i
@@ -29,12 +29,12 @@ def test_xor():
         print "output", ff.forward(i, ff.W)[-1]
 
 
-def test_mnist():
+def test_mnist(max_epochs=1000):
     # download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
 
-    ff = HessianFF([28 * 28, 1000, 500, 250, 30, 10], use_GPU=True,
+    ff = HessianFF([28 * 28, 1000, 500, 250, 30, 10], use_GPU=False,
                    debug=False)
 
     inputs = train[0]
@@ -46,7 +46,7 @@ def test_mnist():
     test = (test[0], tmp)
 
     ff.run_batches(inputs, targets, CG_iter=100, batch_size=7500,
-                   test=test, max_epochs=1000, plotting=True)
+                   test=test, max_epochs=max_epochs, plotting=True)
 
     output = ff.forward(test[0], ff.W)[-1]
     class_err = (np.sum(np.argmax(output, axis=1) !=
@@ -60,7 +60,7 @@ def test_profile():
     import cProfile
     import pstats
 
-    cProfile.run("test_mnist()", "profilestats")
+    cProfile.run("test_mnist(5)", "profilestats")
     p = pstats.Stats("profilestats")
     p.strip_dirs().sort_stats('time').print_stats(20)
 
@@ -92,20 +92,23 @@ def test_integrator():
 
     plt.figure()
     plt.plot(inputs.squeeze().T)
+    plt.title("inputs")
 
     plt.figure()
     plt.plot(targets.squeeze().T)
+    plt.title("targets")
 
     outputs = rnn.forward(inputs, rnn.W)[-1]
     plt.figure()
     plt.plot(outputs.squeeze())
+    plt.title("outputs")
 
     plt.show()
 
 if len(sys.argv) < 2:
     test_xor()
 else:
-    try:
+    if "test_%s" % sys.argv[1] in locals():
         locals()["test_%s" % sys.argv[1]]()
-    except KeyError:
+    else:
         print "Unknown function (%s)" % sys.argv[1]
