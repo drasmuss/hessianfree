@@ -16,13 +16,15 @@ from hessianff import HessianFF
 class HessianRNN(HessianFF):
     def __init__(self, struc_damping=0.0, **kwargs):
         super(HessianRNN, self).__init__(**kwargs)
+        # TODO: allow user to specify which layers are recurrent, instead
+        # of assuming all except first/last
 
         self.struc_damping = struc_damping
 
         # add on recurrent weights
         self.W = np.concatenate(
-            (self.W,
-             self.init_weights([(l + 1, l) for l in self.layers[1:-1]])))
+            (self.W, self.init_weights([(l + 1, l)
+                                        for l in self.layers[1:-1]])))
 
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
@@ -32,7 +34,7 @@ class HessianRNN(HessianFF):
         self.rec_offsets = {}
 
         for l in range(1, self.n_layers - 1):
-            offset = (np.sum(self.n_params) +
+            offset = (len(self.W) +  # note: gets called before rec_W added
                       np.sum([(self.layers[i] + 1) * self.layers[i]
                               for i in range(1, l)]))
             self.rec_offsets[l] = (
@@ -80,29 +82,31 @@ class HessianRNN(HessianFF):
                                        np.float64))
                        for l in self.layers]
 
-        Ws = [self.get_weights(params, i)
-              for i in np.arange(self.n_layers - 1)]
         W_recs = [self.get_weights(params, i, recurrent=True)
                   for i in np.arange(self.n_layers)]
         for s in range(input.shape[1]):
             # input activations
             activations[0][s] = self.act[0](input[:, s])
 
-            for i in range(self.n_layers - 1):
-                ff_input = np.dot(activations[i][s], Ws[i][0]) + Ws[i][1]
+            for i in range(1, self.n_layers):
+                # feedforward input
+                ff_input = np.zeros(activations[i][s].shape)
+                for pre in self.back_conns[i]:
+                    W, b = self.get_weights(params, (pre, i))
+                    ff_input += np.dot(activations[pre][s], W) + b
 
-                if i == self.n_layers - 2:
+                if i == self.n_layers - 1:
                     # no recurrent connections for last layer
                     rec_input = 0
                 else:
                     if s > 0:
-                        rec_input = np.dot(activations[i + 1][s - 1],
-                                           W_recs[i + 1][0])
+                        rec_input = np.dot(activations[i][s - 1],
+                                           W_recs[i][0])
                     else:
                         # bias input on first timestep
-                        rec_input = W_recs[i + 1][1]
+                        rec_input = W_recs[i][1]
 
-                activations[i + 1][s] = self.act[i + 1](ff_input + rec_input)
+                activations[i][s] = self.act[i](ff_input + rec_input)
 
         return activations
 
@@ -136,10 +140,8 @@ class HessianRNN(HessianFF):
                              for i, a in enumerate(activations)]
 
         grad = np.zeros(W.size, dtype=np.float32)
-        delta = [np.zeros((inputs.shape[0], l), dtype=np.float32)
-                 for l in self.layers]
-        W_ff = [self.get_weights(W, l)
-                for l in np.arange(self.n_layers - 1)]
+        deltas = [np.zeros((inputs.shape[0], l), dtype=np.float32)
+                  for l in self.layers]
         W_rec = [self.get_weights(W, l, recurrent=True)
                  for l in np.arange(self.n_layers - 1)]
 
@@ -154,27 +156,31 @@ class HessianRNN(HessianFF):
 
             error = np.nan_to_num(error)  # zero error where target==nan
 
-            delta[-1] = d_activations[-1][s] * error
+            deltas[-1][...] = d_activations[-1][s] * error
             for l in range(self.n_layers - 2, -1, -1):
                 # gradient for output weights
-                offset, W_end, b_end = self.offsets[l]
-                grad[offset:W_end] += self.outer_sum(activations[l][s],
-                                                     delta[l + 1])
-                grad[W_end:b_end] += np.sum(delta[l + 1], axis=0)
+                error = np.zeros(self.activations[l][s].shape)
+                for post in self.conns[l]:
+                    c_error = np.dot(deltas[post],
+                                     self.get_weights(W, (l, post))[0].T)
+                    error += c_error
+                    offset, W_end, b_end = self.offsets[(l, post)]
+                    grad[offset:W_end] += self.outer_sum(activations[l][s],
+                                                         deltas[post])
+                    grad[W_end:b_end] += np.sum(deltas[post], axis=0)
 
                 if l > 0:
                     # gradient for recurrent weights
-                    error = (np.dot(delta[l + 1], W_ff[l][0].T) +
-                             np.dot(delta[l], W_rec[l][0].T))
-                    delta[l] = d_activations[l][s] * error
+                    error += np.dot(deltas[l], W_rec[l][0].T)
+                    deltas[l][...] = d_activations[l][s] * error
 
                     offset, W_end, b_end = self.rec_offsets[l]
                     if s > 0:
                         grad[offset:W_end] += (
-                            self.outer_sum(activations[l][s - 1], delta[l]))
+                            self.outer_sum(activations[l][s - 1], deltas[l]))
                     else:
                         # put remaining gradient into initial bias
-                        grad[W_end:b_end] = np.sum(delta[l], axis=0)
+                        grad[W_end:b_end] = np.sum(deltas[l], axis=0)
 
         # divide by batchsize
         grad /= inputs.shape[0]
@@ -242,81 +248,88 @@ class HessianRNN(HessianFF):
         # R forward pass
         R_inputs = [np.zeros(self.activations[i].shape, dtype=np.float32)
                     for i in np.arange(self.n_layers)]
-        R_acts = [np.zeros((self.inputs.shape[0], self.layers[i]),
-                           dtype=np.float32)
-                  for i in np.arange(self.n_layers)]
+        R_activations = [np.zeros((self.inputs.shape[0], self.layers[i]),
+                                  dtype=np.float32)
+                         for i in np.arange(self.n_layers)]
         R_outputs = np.zeros(self.activations[-1].shape, dtype=np.float32)
-        vs = [self.get_weights(v, l)
-              for l in np.arange(self.n_layers - 1)]
-        Ws = [self.get_weights(self.W, l)
-              for l in np.arange(self.n_layers - 1)]
         v_recs = [self.get_weights(v, l, recurrent=True)
                   for l in np.arange(self.n_layers - 1)]
         W_recs = [self.get_weights(self.W, l, recurrent=True)
                   for l in np.arange(self.n_layers - 1)]
         for s in np.arange(sig_len):
-            for l in np.arange(self.n_layers - 1):
-                R_inputs[l + 1][s] = np.dot(self.activations[l][s],
-                                            vs[l][0]) + vs[l][1]
-                R_inputs[l + 1][s] += np.dot(R_acts[l], Ws[l][0])
+            for l in np.arange(1, self.n_layers):
+                for pre in self.back_conns[l]:
+                    vw, vb = self.get_weights(v, (pre, l))
+                    Ww, _ = self.get_weights(self.W, (pre, l))
+                    R_inputs[l][s] += np.dot(self.activations[pre][s],
+                                             vw) + vb
+                    R_inputs[l][s] += np.dot(R_activations[pre], Ww)
 
-                if l < self.n_layers - 2:
+                if l < self.n_layers - 1:
                     # add recurrent input
                     if s == 0:
-                        R_inputs[l + 1][s] += v_recs[l + 1][1]
+                        R_inputs[l][s] += v_recs[l][1]
                     else:
-                        R_inputs[l + 1][s] += (
-                            np.dot(self.activations[l + 1][s - 1],
-                                   v_recs[l + 1][0]) +
-                            np.dot(R_acts[l + 1], W_recs[l + 1][0]))
+                        R_inputs[l][s] += (
+                            np.dot(self.activations[l][s - 1],
+                                   v_recs[l][0]) +
+                            np.dot(R_activations[l], W_recs[l][0]))
 
-                R_acts[l + 1] = (self.d_activations[l + 1][s] *
-                                 R_inputs[l + 1][s])
-            R_outputs[s, ...] = R_acts[-1]  # copy so we can reuse in back pass
+                R_activations[l][...] = (self.d_activations[l][s] *
+                                         R_inputs[l][s])
+
+            # copy output activations so we can reuse to compute error in
+            # backwards pass
+            R_outputs[s] = R_activations[-1]
 
         # R backward pass
-        R_delta = [np.zeros((self.inputs.shape[0], self.layers[l]),
-                            dtype=np.float32)
-                   for l in np.arange(self.n_layers)]
+        R_deltas = [np.zeros((self.inputs.shape[0], self.layers[l]),
+                             dtype=np.float32)
+                    for l in np.arange(self.n_layers)]
         for s in np.arange(sig_len - 1, -1, -1):
             # output layer
-            R_delta[-1] = self.d_activations[-1][s] * R_outputs[s]
+            R_deltas[-1][...] = self.d_activations[-1][s] * R_outputs[s]
 
             for l in np.arange(self.n_layers - 2, -1, -1):
                 # feedforward gradient
-                offset, W_end, b_end = self.offsets[l]
-                if self.use_GPU:
-                    Gv[offset:W_end] += (
-                        self.outer_sum(self.GPU_activations[l][s],
-                                       R_delta[l + 1]))
-                else:
-                    Gv[offset:W_end] += self.outer_sum(self.activations[l][s],
-                                                       R_delta[l + 1])
-                Gv[W_end:b_end] += np.sum(R_delta[l + 1], axis=0)
+                R_error = np.zeros(self.activations[l][s].shape)
+                for post in self.conns[l]:
+                    W, _ = self.get_weights(self.W, (l, post))
+                    R_error += np.dot(R_deltas[post], W.T)
+
+                    offset, W_end, b_end = self.offsets[(l, post)]
+                    if self.use_GPU:
+                        Gv[offset:W_end] += (
+                            self.outer_sum(self.GPU_activations[l][s],
+                                           R_deltas[post]))
+                    else:
+                        Gv[offset:W_end] += (
+                            self.outer_sum(self.activations[l][s],
+                                           R_deltas[post]))
+                    Gv[W_end:b_end] += np.sum(R_deltas[post], axis=0)
 
                 if l > 0:
                     # recurrent gradient
-                    R_delta[l] = (np.dot(R_delta[l], W_recs[l][0].T) +
-                                  np.dot(R_delta[l + 1], Ws[l][0].T))
-                    R_delta[l] *= self.d_activations[l][s]
+                    R_error += np.dot(R_deltas[l], W_recs[l][0].T)
+                    R_deltas[l][...] = self.d_activations[l][s] * R_error
 
                     # apply structural damping
-                    R_delta[l] += (damping * self.struc_damping *
-                                   self.d_activations[l][s] *
-                                   R_inputs[l][s])
+                    R_deltas[l] += (damping * self.struc_damping *
+                                    self.d_activations[l][s] *
+                                    R_inputs[l][s])
 
                     offset, W_end, b_end = self.rec_offsets[l]
                     if s > 0:
                         if self.use_GPU:
                             Gv[offset:W_end] += (
                                 self.outer_sum(self.GPU_activations[l][s - 1],
-                                               R_delta[l]))
+                                               R_deltas[l]))
                         else:
                             Gv[offset:W_end] += (
                                 self.outer_sum(self.activations[l][s - 1],
-                                               R_delta[l]))
+                                               R_deltas[l]))
                     else:
-                        Gv[W_end:b_end] = np.sum(R_delta[l], axis=0)
+                        Gv[W_end:b_end] = np.sum(R_deltas[l], axis=0)
 
         Gv /= self.inputs.shape[0]
 

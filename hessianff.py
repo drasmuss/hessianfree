@@ -11,6 +11,7 @@ http://www.cs.toronto.edu/~jmartens/research.html
 """
 
 import pickle
+from collections import defaultdict, OrderedDict
 
 from scipy.special import expit
 import numpy as np
@@ -26,18 +27,14 @@ except:
 
 class HessianFF(object):
     def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
-                 debug=False, neuron_types="logistic"):
+                 debug=False, neuron_types="logistic", conns=None):
         self.use_GPU = use_GPU
         self.debug = debug
         self.n_layers = len(layers)
         self.layers = layers
-        self.n_params = [0 for _ in range(self.n_layers - 1)]
-        for i in range(self.n_layers - 1):
-            self.n_params[i] += (self.layers[i] + 1) * self.layers[i + 1]
+
         self.inputs = None
         self.targets = None
-
-        self.compute_offsets()
 
         if isinstance(neuron_types, str):
             neuron_types = [neuron_types for _ in range(self.n_layers)]
@@ -58,6 +55,25 @@ class HessianFF(object):
             else:
                 raise ValueError("Unknown neuron type (%s)" % t)
 
+        # add connections
+        if conns is None:
+            # normal feedforward connections
+            conns = {}
+            for pre, post in zip(np.arange(self.n_layers - 1),
+                                 np.arange(1, self.n_layers)):
+                conns[pre] = [post]
+
+        self.conns = OrderedDict(conns)
+        back_conns = defaultdict(list)
+        for pre in conns:
+            # can only make downstream connections
+            for post in conns[pre]:
+                if pre >= post:
+                    raise ValueError("Invalid connection (%s >= %s)"
+                                     % (pre, post))
+                back_conns[post] += [pre]
+        self.back_conns = OrderedDict(back_conns)
+
         if load_weights is not None:
             if isinstance(load_weights, np.ndarray):
                 self.W = load_weights
@@ -67,9 +83,12 @@ class HessianFF(object):
                     self.W = pickle.load(f)
             assert self.W.dtype == np.float32
         else:
-            self.W = self.init_weights([(self.layers[i] + 1,
-                                         self.layers[i + 1])
-                                        for i in range(len(self.layers) - 1)])
+            self.W = self.init_weights([(self.layers[pre] + 1,
+                                         self.layers[post])
+                                        for pre in self.conns
+                                        for post in self.conns[pre]])
+
+        self.compute_offsets()
 
         if use_GPU:
             self.init_GPU()
@@ -200,37 +219,50 @@ class HessianFF(object):
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
 
+        n_params = [(self.layers[pre] + 1) * self.layers[post]
+                    for pre in self.conns
+                    for post in self.conns[pre]]
         self.offsets = {}
-        for l in range(self.n_layers - 1):
-            offset = np.sum(self.n_params[:l])
-            self.offsets[l] = (
-                offset,
-                offset + self.layers[l] * self.layers[l + 1],
-                offset + self.n_params[l])
+        offset = 0
+        for pre in self.conns:
+            for post in self.conns[pre]:
+                n_params = (self.layers[pre] + 1) * self.layers[post]
+                self.offsets[(pre, post)] = (
+                    offset,
+                    offset + n_params - self.layers[post],
+                    offset + n_params)
+                offset += n_params
 
-    def get_weights(self, params, layer, separate=True):
+    def get_weights(self, params, conn, separate=True):
         """Get weight matrix for a layer from the overall parameter vector."""
 
-        offset, W_end, b_end = self.offsets[layer]
+        offset, W_end, b_end = self.offsets[conn]
         if separate:
             W = params[offset:W_end]
             b = params[W_end:b_end]
 
-            return (W.reshape((self.layers[layer],
-                               self.layers[layer + 1])),
+            return (W.reshape((self.layers[conn[0]],
+                               self.layers[conn[1]])),
                     b)
         else:
-            return params[offset:b_end].reshape((self.layers[layer] + 1,
-                                                 self.layers[layer + 1]))
+            return params[offset:b_end].reshape((self.layers[conn[0]] + 1,
+                                                 self.layers[conn[1]]))
 
     def forward(self, input, params):
         """Compute feedforward activations for given input and parameters."""
 
+        if input.ndim < 2:
+            # then we've just been given a single sample (rather than batch)
+            input = input[None, :]
+
         activations = [None for _ in range(self.n_layers)]
         activations[0] = self.act[0](input)
-        for i in range(self.n_layers - 1):
-            W, b = self.get_weights(params, i)
-            activations[i + 1] = self.act[i + 1](np.dot(activations[i], W) + b)
+        for i in range(1, self.n_layers):
+            inputs = np.zeros((input.shape[0], self.layers[i]))
+            for pre in self.back_conns[i]:
+                W, b = self.get_weights(params, (pre, i))
+                inputs += np.dot(activations[pre], W) + b
+            activations[i] = self.act[i](inputs)
 
         return activations
 
@@ -281,13 +313,20 @@ class HessianFF(object):
         grad = np.zeros(W.size, dtype=np.float32)
 
         # backpropagate error
-        for i in range(self.n_layers - 1, 0, -1):
-            delta = d_activations[i] * error
-            error = np.dot(delta, self.get_weights(W, i - 1)[0].T)
+        deltas = [np.zeros(activations[l].shape) for l in range(self.n_layers)]
+        deltas[-1][...] = d_activations[-1] * error
+        for i in range(self.n_layers - 2, -1, -1):
+            error = np.zeros(self.activations[i].shape)
+            for post in self.conns[i]:
+                c_error = np.dot(deltas[post],
+                                 self.get_weights(W, (i, post))[0].T)
+                error += c_error
+                offset, W_end, b_end = self.offsets[(i, post)]
+                self.outer_sum(activations[i], deltas[post],
+                               out=grad[offset:W_end])
+                np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
-            offset, W_end, b_end = self.offsets[i - 1]
-            self.outer_sum(activations[i - 1], delta, out=grad[offset:W_end])
-            np.sum(delta, axis=0, out=grad[W_end:b_end])
+            deltas[i][...] = d_activations[i] * error
 
         grad /= inputs.shape[0]
 
@@ -370,6 +409,8 @@ class HessianFF(object):
         except AssertionError:
             print g
             print calc_G
+            print calc_G - g
+            print calc_G / g
             raise
 
     def G(self, v, damping=0, output=None):
@@ -380,33 +421,40 @@ class HessianFF(object):
         else:
             Gv = output
 
-        Ws = [self.get_weights(self.W, i)[0] for i in range(self.n_layers - 1)]
-
         # R forward pass
-        R_activation = np.zeros(self.inputs.shape, dtype=np.float32)
-        for i in range(self.n_layers - 1):
-            vw, vb = self.get_weights(v, i)
-            R_input = np.dot(self.activations[i], vw) + vb
-            R_input += np.dot(R_activation, Ws[i])
-            R_activation = R_input * self.d_activations[i + 1]
+        R_activations = [np.zeros(self.activations[l].shape)
+                         for l in range(self.n_layers)]
+        for i in range(1, self.n_layers):
+            R_input = np.zeros(self.activations[i].shape)
+            for pre in self.back_conns[i]:
+                vw, vb = self.get_weights(v, (pre, i))
+                Ww, _ = self.get_weights(self.W, (pre, i))
+                R_input += np.dot(self.activations[pre], vw) + vb
+                R_input += np.dot(R_activations[pre], Ww)
+            R_activations[i][...] = R_input * self.d_activations[i]
 
         # backward pass
-        R_error = R_activation  # second derivative of error function is 1
+        R_deltas = [np.zeros(self.activations[l].shape)
+                    for l in range(self.n_layers)]
 
-        for i in range(self.n_layers - 1, 0, -1):
-            R_delta = self.d_activations[i] * R_error
+        R_deltas[-1][...] = self.d_activations[-1] * R_activations[-1]
+        # note: second derivative of error function is 1
 
-            R_error = np.dot(R_delta, Ws[i - 1].T)
+        for i in range(self.n_layers - 2, -1, -1):
+            R_error = np.zeros(self.activations[i].shape)
+            for post in self.conns[i]:
+                W, _ = self.get_weights(self.W, (i, post))
+                R_error += np.dot(R_deltas[post], W.T)
 
-            offset, W_end, b_end = self.offsets[i - 1]
-
-            if self.use_GPU:
-                self.outer_sum(self.GPU_activations[i - 1], R_delta,
-                               out=Gv[offset:W_end])
-            else:
-                self.outer_sum(self.activations[i - 1], R_delta,
-                               out=Gv[offset:W_end])
-            np.sum(R_delta, axis=0, out=Gv[W_end:b_end])
+                offset, W_end, b_end = self.offsets[(i, post)]
+                if self.use_GPU:
+                    self.outer_sum(self.GPU_activations[i], R_deltas[post],
+                                   out=Gv[offset:W_end])
+                else:
+                    self.outer_sum(self.activations[i], R_deltas[post],
+                                   out=Gv[offset:W_end])
+                np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
+            R_deltas[i][...] = self.d_activations[i] * R_error
 
         Gv /= len(self.inputs)
 
