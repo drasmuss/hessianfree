@@ -52,6 +52,12 @@ class HessianFF(object):
             elif t == "linear":
                 self.act += [lambda x: x]
                 self.deriv += [np.ones_like]
+            elif isinstance(t, list):
+                if callable[t[0]] and callable[t[1]]:
+                    self.act += [t[0]]
+                    self.deriv += [t[1]]
+                else:
+                    raise TypeError("Must specify a function for custom type")
             else:
                 raise ValueError("Unknown neuron type (%s)" % t)
 
@@ -274,7 +280,7 @@ class HessianFF(object):
         targets = self.targets if targets is None else targets
 
         if (self.activations is not None and
-            W is self.W and inputs is self.inputs):
+                W is self.W and inputs is self.inputs):
             # use cached activations
             outputs = self.activations[-1]
         else:

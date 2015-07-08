@@ -10,6 +10,9 @@ from hessianrnn import HessianRNN
 
 def test_xor():
     ff = HessianFF([2, 5, 1], debug=True, use_GPU=False)
+#     ff = HessianFF([2, 5, 5, 1],
+#                    conns={0: [1, 2], 1: [2], 2: [3]},
+#                    debug=True, use_GPU=False)
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
@@ -55,6 +58,94 @@ def test_mnist(max_epochs=1000):
     print "classification error", class_err
 
 
+def test_cifar():
+    # download dataset at http://www.cs.toronto.edu/~kriz/cifar.html
+    train = [None, None]
+    for i in range(1, 6):
+        with open("cifar/data_batch_%s" % i, "rb") as f:
+            batch = pickle.load(f)
+        if i == 1:
+            train[0] = batch["data"]
+            train[1] = batch["labels"]
+        else:
+            train[0] = np.concatenate((train[0], batch["data"]), axis=0)
+            train[1] = np.concatenate((train[1], batch["labels"]), axis=0)
+    with open("cifar/test_batch", "rb") as f:
+        batch = pickle.load(f)
+    test = [None, None]
+    test[0] = batch["data"]
+    test[1] = batch["labels"]
+
+    # take random patches from training set
+    dim = 24
+    tmp = np.zeros((train[0].shape[0], dim * dim * 3))
+    for i, t in enumerate(train[0]):
+        img = t.reshape(3, 32, 32)
+
+#         plt.figure()
+#         plt.imshow(img.swapaxes(0, 2), interpolation="none")
+#         plt.show()
+
+        x_offset = np.random.randint(32 - dim)
+        y_offset = np.random.randint(32 - dim)
+        img = img[:, x_offset:x_offset + dim, y_offset:y_offset + dim]
+
+#         plt.figure()
+#         plt.imshow(img.swapaxes(0, 2), interpolation="none")
+#         plt.show()
+
+        tmp[i] = np.ravel(img)
+    train[0] = tmp
+
+    # take centre patches from test set
+    tmp = np.zeros((test[0].shape[0], dim * dim * 3))
+    for i, t in enumerate(test[0]):
+        img = t.reshape(3, 32, 32)
+        offset = (32 - dim) / 2
+        img = img[:, offset:offset + dim, offset:offset + dim]
+        tmp[i] = np.ravel(img)
+    test[0] = tmp
+
+    train[0] = train[0].astype(np.float32)
+    tmp = np.ones((len(train[0]), 10), dtype=np.float32) * 0.1
+    tmp[np.arange(len(train[0])), train[1]] = 0.9
+    train[1] = tmp
+
+    test[0] = test[0].astype(np.float32)
+    tmp = np.ones((len(test[0]), 10), dtype=np.float32) * 0.1
+    tmp[np.arange(len(test[0])), test[1]] = 0.9
+    test[1] = tmp
+
+#     class SoftLIF:
+#         def __init__(self, tau_ref, tau_RC, gamma):
+#             self.tau_ref = tau_ref
+#             self.tau_RC = tau_RC
+#             self.gamma = gamma
+#
+#         def activation(self, x):
+#             output = 1. / (
+#                 self.tau_ref +
+#                 self.tau_rc *
+#                 np.log1p(1. /
+#                          (self.gamma *
+#                           np.log1p(np.exp((x - 1) / self.gamma)))))
+#             return output
+#
+#         def derivative(self, a):
+#             pass
+
+    ff = HessianFF([dim * dim * 3, 1000, 500, 250, 30, 10], use_GPU=False,
+                   debug=False)
+
+    ff.run_batches(train[0], train[1], CG_iter=100, batch_size=1000,
+                   test=test, max_epochs=1000, plotting=True)
+
+    output = ff.forward(test[0], ff.W)[-1]
+    class_err = np.mean(np.argmax(output, axis=1) !=
+                        np.argmax(test[1], axis=1))
+    print "classification error", class_err
+
+
 def test_profile():
     np.random.seed(0)
     import cProfile
@@ -79,6 +170,7 @@ def test_integrator():
 
     rnn = HessianRNN(layers=[1, 10, 10, 1], struc_damping=0.0,
                      neuron_types="logistic",
+                     conns={0: [1, 2], 1: [2], 2: [3]},
                      use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
