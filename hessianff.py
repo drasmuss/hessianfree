@@ -144,6 +144,10 @@ class HessianFF(object):
             if out is None:
                 out = np.zeros(a_len * b_len, dtype=np.float32)
 
+            if self.debug:
+                a = a.astype(np.float32)
+                b = b.astype(np.float32)
+
             assert a.dtype == b.dtype == out.dtype == np.float32
             assert b_len < self.num_threads
             # note: could make this work with longer b's if needed,
@@ -264,7 +268,9 @@ class HessianFF(object):
         activations = [None for _ in range(self.n_layers)]
         activations[0] = self.act[0](input)
         for i in range(1, self.n_layers):
-            inputs = np.zeros((input.shape[0], self.layers[i]))
+            inputs = np.zeros((input.shape[0], self.layers[i]),
+                              dtype=(np.float32 if not self.debug
+                                     else np.float64))
             for pre in self.back_conns[i]:
                 W, b = self.get_weights(params, (pre, i))
                 inputs += np.dot(activations[pre], W) + b
@@ -319,10 +325,13 @@ class HessianFF(object):
         grad = np.zeros(W.size, dtype=np.float32)
 
         # backpropagate error
-        deltas = [np.zeros(activations[l].shape) for l in range(self.n_layers)]
+        deltas = [np.zeros(activations[l].shape, dtype=np.float32)
+                  for l in range(self.n_layers)]
+
         deltas[-1][...] = d_activations[-1] * error
+
         for i in range(self.n_layers - 2, -1, -1):
-            error = np.zeros(self.activations[i].shape)
+            error = np.zeros_like(deltas[i])
             for post in self.conns[i]:
                 c_error = np.dot(deltas[post],
                                  self.get_weights(W, (i, post))[0].T)
@@ -428,10 +437,10 @@ class HessianFF(object):
             Gv = output
 
         # R forward pass
-        R_activations = [np.zeros(self.activations[l].shape)
+        R_activations = [np.zeros_like(self.activations[l])
                          for l in range(self.n_layers)]
         for i in range(1, self.n_layers):
-            R_input = np.zeros(self.activations[i].shape)
+            R_input = np.zeros_like(self.activations[i])
             for pre in self.back_conns[i]:
                 vw, vb = self.get_weights(v, (pre, i))
                 Ww, _ = self.get_weights(self.W, (pre, i))
@@ -440,14 +449,14 @@ class HessianFF(object):
             R_activations[i][...] = R_input * self.d_activations[i]
 
         # backward pass
-        R_deltas = [np.zeros(self.activations[l].shape)
+        R_deltas = [np.zeros_like(self.activations[l])
                     for l in range(self.n_layers)]
 
         R_deltas[-1][...] = self.d_activations[-1] * R_activations[-1]
         # note: second derivative of error function is 1
 
         for i in range(self.n_layers - 2, -1, -1):
-            R_error = np.zeros(self.activations[i].shape)
+            R_error = np.zeros_like(self.activations[i])
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.W, (i, post))
                 R_error += np.dot(R_deltas[post], W.T)
@@ -603,6 +612,9 @@ class HessianFF(object):
                 self.GPU_activations = [gpuarray.to_gpu(a)
                                         for a in self.activations]
 
+            assert self.activations[-1].dtype == (np.float32 if not self.debug
+                                                  else np.float64)
+
             # compute gradient
             grad = self.calc_grad()
 
@@ -701,8 +713,7 @@ class HessianFF(object):
 
             # dump weights
             if i % print_period == 0:
-                with open("HF_weights.pkl", "wb") as f:
-                    pickle.dump(self.W, f)
+                np.save("HF_weights.npy", self.W)
 
             # check for termination
             if test_errs[-1] < target_err:

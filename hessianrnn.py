@@ -90,7 +90,7 @@ class HessianRNN(HessianFF):
 
             for i in range(1, self.n_layers):
                 # feedforward input
-                ff_input = np.zeros(activations[i][s].shape)
+                ff_input = np.zeros_like(activations[i][s])
                 for pre in self.back_conns[i]:
                     W, b = self.get_weights(params, (pre, i))
                     ff_input += np.dot(activations[pre][s], W) + b
@@ -159,7 +159,7 @@ class HessianRNN(HessianFF):
             deltas[-1][...] = d_activations[-1][s] * error
             for l in range(self.n_layers - 2, -1, -1):
                 # gradient for output weights
-                error = np.zeros(self.activations[l][s].shape)
+                error = np.zeros_like(deltas[l])
                 for post in self.conns[l]:
                     c_error = np.dot(deltas[post],
                                      self.get_weights(W, (l, post))[0].T)
@@ -292,7 +292,7 @@ class HessianRNN(HessianFF):
 
             for l in np.arange(self.n_layers - 2, -1, -1):
                 # feedforward gradient
-                R_error = np.zeros(self.activations[l][s].shape)
+                R_error = np.zeros_like(self.activations[l][s])
                 for post in self.conns[l]:
                     W, _ = self.get_weights(self.W, (l, post))
                     R_error += np.dot(R_deltas[post], W.T)
