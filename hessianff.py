@@ -27,31 +27,49 @@ except:
 
 class HessianFF(object):
     def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
-                 debug=False, neuron_types="logistic", conns=None):
+                 debug=False, neuron_types="logistic", conns=None,
+                 error_type="mse"):
         self.use_GPU = use_GPU
         self.debug = debug
+        self.dtype = np.float64 if self.debug else np.float32
         self.n_layers = len(layers)
         self.layers = layers
-
         self.inputs = None
         self.targets = None
 
+        # set up neural activation functions for each layer
         if isinstance(neuron_types, str):
             neuron_types = [neuron_types for _ in range(self.n_layers)]
             neuron_types[0] = "linear"
+            if error_type == "ce":
+                neuron_types[-1] = "softmax"
 
+        if len(neuron_types) != len(layers):
+            raise ValueError("Must specify a neuron type for each layer")
+
+        self.neuron_types = neuron_types
         self.act = []
         self.deriv = []
         for t in neuron_types:
             if t == "logistic":
                 self.act += [expit]
-                self.deriv += [lambda x: x * (1 - x)]
+                self.deriv += [lambda a: a * (1 - a)]
             elif t == "tanh":
                 self.act += [np.tanh]
-                self.deriv += [lambda x: 1 - x ** 2]
+                self.deriv += [lambda a: 1 - a ** 2]
             elif t == "linear":
                 self.act += [lambda x: x]
                 self.deriv += [np.ones_like]
+            elif t == "relu":
+                self.act += [lambda x: np.maximum(0, x)]
+                self.deriv += [lambda x: x > 0]
+            elif t == "softmax":
+                def softmax(x):
+                    e = np.exp(x)
+                    return e / np.sum(e, axis=1)[:, None]
+                self.act += [softmax]
+                self.deriv += [lambda a: a[..., None] * (np.eye(a.shape[1]) -
+                                                         a[:, None, :])]
             elif isinstance(t, list):
                 if callable[t[0]] and callable[t[1]]:
                     self.act += [t[0]]
@@ -60,6 +78,16 @@ class HessianFF(object):
                     raise TypeError("Must specify a function for custom type")
             else:
                 raise ValueError("Unknown neuron type (%s)" % t)
+
+        # check error type
+        if error_type not in ["mse", "ce"]:
+            raise ValueError("Unknown error type (%s)" % error_type)
+        if (error_type == "ce" and
+            np.any(self.act[-1]([np.linspace(-100, 100, 100)]) <= 0)):
+            # this won't catch everything, but hopefully a useful warning
+            raise ValueError("Must use positive activation function"
+                             " with CE error")
+        self.error_type = error_type
 
         # add connections
         if conns is None:
@@ -85,9 +113,10 @@ class HessianFF(object):
                 self.W = load_weights
             else:
                 # load weights from file
-                with open(load_weights, "rb") as f:
-                    self.W = pickle.load(f)
-            assert self.W.dtype == np.float32
+                self.W = np.load(load_weights)
+            if self.W.dtype != self.dtype:
+                raise TypeError("Weights from file don't match self.dtype (%s)"
+                                % self.dtype)
         else:
             self.W = self.init_weights([(self.layers[pre] + 1,
                                          self.layers[post])
@@ -99,12 +128,8 @@ class HessianFF(object):
         if use_GPU:
             self.init_GPU()
         else:
-            def outer_sum(a, b, out=None):
-                if out is None:
-                    return np.ravel(np.einsum("ij,ik", a, b))
-                else:
-                    out[:] = np.ravel(np.einsum("ij,ik", a, b))
-                    return out
+            def outer_sum(a, b):
+                return np.ravel(np.einsum("ij,ik", a, b))
             self.outer_sum = outer_sum
 
     def init_GPU(self):
@@ -136,34 +161,54 @@ class HessianFF(object):
         }
         """)
 
-        def outer_sum(a, b, out=None):
+        def outer_sum(a, b):
+            # TODO: shortcut this to CPU if a and b are small
+
             a_len = np.int32(a.shape[1])
             b_len = np.int32(b.shape[1])
             batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
 
-            if out is None:
-                out = np.zeros(a_len * b_len, dtype=np.float32)
+            out = np.zeros(a_len * b_len, dtype=np.float32)
 
             if self.debug:
+                # convert the 64 bit values to 32 bit
                 a = a.astype(np.float32)
                 b = b.astype(np.float32)
 
-            assert a.dtype == b.dtype == out.dtype == np.float32
-            assert b_len < self.num_threads
+            assert a.dtype == b.dtype == np.float32
+            assert b_len <= self.num_threads
             # note: could make this work with longer b's if needed,
             # would just need to tile horizontally in the same way as
             # is done vertically
 
-            rows_per_block = np.minimum(self.num_threads / b_len,
-                                        a_len)
-            while a_len % rows_per_block != 0:
-                rows_per_block -= 1
+            # we're going to divide the data into n*b_len blocks. we want n
+            # to be as large as possible, so we use all the threads in a block.
+            # but a also needs to be evenly divisible by n (I don't think it's
+            # possible to have different sized blocks in different grid cells).
+            # so we want the highest factor of a that is <= num_threads/b_len.
+            # to be slightly more efficient we'll always search bottom up.
+            # an overly complex procedure for a simple task.
+            start = int(np.ceil(self.num_threads / b_len))
+            stop = int(np.ceil(np.sqrt(a_len)))
+            swap = False
+            if start > stop:
+                swap = True
+                start = np.maximum(1, a_len / start)
+            for f in range(start, stop):
+                if a_len % f == 0:
+                    rows_per_block = f if not swap else a_len / f
+                    break
+            else:
+                rows_per_block = 1
 
-            gpu_outer = mod.get_function("outer_sum")
+            # load data onto gpu (if it isn't there already)
             a_gpu = (a if isinstance(a, gpuarray.GPUArray) else drv.In(a))
             b_gpu = (b if isinstance(b, gpuarray.GPUArray) else drv.In(b))
             out_gpu = (out if isinstance(out, gpuarray.GPUArray) else
                        drv.Out(out))
+
+            # execute function
+            gpu_outer = mod.get_function("outer_sum")
             gpu_outer(a_gpu, b_gpu, out_gpu, batchsize,
                       grid=(a_len / rows_per_block, 1),
                       block=(rows_per_block, b_len, 1))
@@ -192,17 +237,13 @@ class HessianFF(object):
 
         self.outer_sum = outer_sum
 
-    def init_weights(self, shapes, dtype=np.float32):
+    def init_weights(self, shapes):
         """Weight initialization, given shapes of weight matrices (including
         bias row)."""
 
-        if self.debug and dtype != np.float64:
-            print "Changing weights to 64bit precision for debugging"
-            dtype = np.float64
-
         # sparse initialization (from martens)
         num_conn = 15
-        W = [np.zeros(s, dtype=dtype) for s in shapes]
+        W = [np.zeros(s, dtype=self.dtype) for s in shapes]
         for i, s in enumerate(shapes):
             for j in range(s[1]):
                 # pick num_conn random pre neurons
@@ -269,17 +310,18 @@ class HessianFF(object):
         activations[0] = self.act[0](input)
         for i in range(1, self.n_layers):
             inputs = np.zeros((input.shape[0], self.layers[i]),
-                              dtype=(np.float32 if not self.debug
-                                     else np.float64))
+                              dtype=self.dtype)
             for pre in self.back_conns[i]:
                 W, b = self.get_weights(params, (pre, i))
                 inputs += np.dot(activations[pre], W) + b
+                # note: we're applying a bias on each connection (rather
+                # than one for each neuron)
             activations[i] = self.act[i](inputs)
 
         return activations
 
     def error(self, W=None, inputs=None, targets=None):
-        """Compute RMS error."""
+        """Compute network error."""
 
         W = self.W if W is None else W
         inputs = self.inputs if inputs is None else inputs
@@ -293,10 +335,30 @@ class HessianFF(object):
             # compute activations
             outputs = self.forward(inputs, W)[-1]
 
-        error = np.sum(np.nan_to_num(outputs - targets) ** 2)
-        error /= 2 * len(inputs)
+        if self.error_type == "mse":
+            error = np.sum(np.nan_to_num(outputs - targets) ** 2)
+            error /= 2 * len(inputs)
+        elif self.error_type == "ce":
+            nans = np.isnan(targets)
+            targets[nans] = outputs[nans]
+            error = -np.sum(targets * np.log(outputs))
+            error /= len(inputs)
 
         return error
+
+    def J_dot(self, J, vec):
+        """Compute the product of a Jacobian and some vector."""
+
+        # In many cases the Jacobian is a diagonal matrix, so it is more
+        # efficient to just represent it with the diagonal vector.  This
+        # function just lets those two be used interchangeably.
+
+        if J.ndim == 2:
+            # note: the first dimension is the batch, so ndim==2 means
+            # this is a diagonal representation
+            return J * vec
+        else:
+            return np.einsum("ijk,ik->ij", J, vec)
 
     def calc_grad(self, W=None, inputs=None, targets=None):
         """Compute parameter gradient."""
@@ -307,28 +369,31 @@ class HessianFF(object):
 
         if W is self.W and inputs is self.inputs:
             # use cached activations
-            activations = (self.activations
-                           if not self.use_GPU else
-                           self.GPU_activations)
+            activations = self.activations
+            GPU_activations = self.GPU_activations
             d_activations = self.d_activations
-            error = self.activations[-1] - targets  # can't use GPU activations
         else:
             # compute activations
             activations = self.forward(inputs, W)
+            GPU_activations = None
             d_activations = [self.deriv[i](a)
                              for i, a in enumerate(activations)]
+
+        grad = np.zeros(W.size, dtype=self.dtype)
+
+        # backpropagate error
+        deltas = [np.zeros(activations[l].shape, dtype=self.dtype)
+                  for l in range(self.n_layers)]
+
+        if self.error_type == "mse":
             error = activations[-1] - targets
+        elif self.error_type == "ce":
+            error = -targets / activations[-1]
 
         # translate any nans (generated when target == nan) to zero error
         error = np.nan_to_num(error)
 
-        grad = np.zeros(W.size, dtype=np.float32)
-
-        # backpropagate error
-        deltas = [np.zeros(activations[l].shape, dtype=np.float32)
-                  for l in range(self.n_layers)]
-
-        deltas[-1][...] = d_activations[-1] * error
+        deltas[-1][...] = self.J_dot(d_activations[-1], error)
 
         for i in range(self.n_layers - 2, -1, -1):
             error = np.zeros_like(deltas[i])
@@ -336,12 +401,15 @@ class HessianFF(object):
                 c_error = np.dot(deltas[post],
                                  self.get_weights(W, (i, post))[0].T)
                 error += c_error
+
                 offset, W_end, b_end = self.offsets[(i, post)]
-                self.outer_sum(activations[i], deltas[post],
-                               out=grad[offset:W_end])
+                grad[offset:W_end] = self.outer_sum(activations[i]
+                                                    if GPU_activations is None
+                                                    else GPU_activations[i],
+                                                    deltas[post])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
-            deltas[i][...] = d_activations[i] * error
+            deltas[i][...] = self.J_dot(d_activations[i], error)
 
         grad /= inputs.shape[0]
 
@@ -380,11 +448,13 @@ class HessianFF(object):
         self.inputs = inputs
         self.targets = targets
 
-        # calculate gradients
+        # calculate activations
         self.activations = self.forward(self.inputs, self.W)
+        self.GPU_activations = None
         self.d_activations = [self.deriv[i](a)
                               for i, a in enumerate(self.activations)]
 
+        # compute gradient
         grad = self.calc_grad()
 
         if self.debug:
@@ -400,7 +470,7 @@ class HessianFF(object):
         N = self.W.size
 
         g = np.zeros(N)
-        for input in inputs:
+        for n, input in enumerate(inputs):
             base = self.forward(input, self.W)[-1]
 
             J = np.zeros((base.size, N))
@@ -411,7 +481,19 @@ class HessianFF(object):
                 J[:, i] = (self.forward(input, self.W + inc_i)[-1] -
                            base) / eps
 
-            L = np.eye(base.size)  # true when using rms
+            if self.error_type == "mse":
+                L = np.eye(base.size)
+            elif self.error_type == "ce":
+#                 L = np.zeros(base.size)
+#                 for j in range(base.size):
+#                     inc_j = np.zeros(base.size)
+#                     inc_j[j] = eps
+#                     L[j] = ((-np.sum(targets[n] * np.log(base + inc_j)) +
+#                              np.sum(targets[n] * np.log(base))) / eps -
+#                             (-np.sum(targets[n] * np.log(base)) +
+#                              np.sum(targets[n] * np.log(base - inc_j))) / eps) / eps
+#                 assert np.allclose(L, targets[n] / base ** 2, atol=1e-3)
+                L = np.diag((targets[n] / base ** 2).squeeze())
 
             g += np.dot(np.dot(J.T, np.dot(L, J)), v)
 
@@ -432,7 +514,7 @@ class HessianFF(object):
         """Compute Gauss-Newton matrix-vector product."""
 
         if output is None:
-            Gv = np.zeros(self.W.size, dtype=np.float32)
+            Gv = np.zeros(self.W.size, dtype=self.dtype)
         else:
             Gv = output
 
@@ -446,14 +528,22 @@ class HessianFF(object):
                 Ww, _ = self.get_weights(self.W, (pre, i))
                 R_input += np.dot(self.activations[pre], vw) + vb
                 R_input += np.dot(R_activations[pre], Ww)
-            R_activations[i][...] = R_input * self.d_activations[i]
+
+            R_activations[i][...] = self.J_dot(self.d_activations[i], R_input)
 
         # backward pass
         R_deltas = [np.zeros_like(self.activations[l])
                     for l in range(self.n_layers)]
 
-        R_deltas[-1][...] = self.d_activations[-1] * R_activations[-1]
-        # note: second derivative of error function is 1
+        if self.error_type == "mse":
+            # second derivative of error function is 1
+            R_error = R_activations[-1]
+        elif self.error_type == "ce":
+            R_error = (R_activations[-1] *
+                       self.targets / self.activations[-1] ** 2)
+
+        R_deltas[-1][...] = self.J_dot(self.d_activations[-1],
+                                       R_error)
 
         for i in range(self.n_layers - 2, -1, -1):
             R_error = np.zeros_like(self.activations[i])
@@ -462,14 +552,13 @@ class HessianFF(object):
                 R_error += np.dot(R_deltas[post], W.T)
 
                 offset, W_end, b_end = self.offsets[(i, post)]
-                if self.use_GPU:
-                    self.outer_sum(self.GPU_activations[i], R_deltas[post],
-                                   out=Gv[offset:W_end])
-                else:
-                    self.outer_sum(self.activations[i], R_deltas[post],
-                                   out=Gv[offset:W_end])
+                Gv[offset:W_end] = self.outer_sum(self.activations[i] if
+                                                  self.GPU_activations is None
+                                                  else self.GPU_activations[i],
+                                                  R_deltas[post])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
-            R_deltas[i][...] = self.d_activations[i] * R_error
+
+            R_deltas[i][...] = self.J_dot(self.d_activations[i], R_error)
 
         Gv /= len(self.inputs)
 
@@ -483,8 +572,8 @@ class HessianFF(object):
         store_iter = 5
         store_mult = 1.3
         deltas = []
-        G_dir = np.zeros(self.W.size, dtype=np.float32)
-        vals = np.zeros(iters, dtype=np.float32)
+        G_dir = np.zeros(self.W.size, dtype=self.dtype)
+        vals = np.zeros(iters, dtype=self.dtype)
 
         base_grad = -grad
         delta = init_delta
@@ -570,7 +659,7 @@ class HessianFF(object):
         else:
             print_period = 10
 
-        init_delta = np.zeros(self.W.size, dtype=np.float32)
+        init_delta = np.zeros(self.W.size, dtype=self.dtype)
         self.damping = init_damping
         test_errs = []
 
@@ -601,19 +690,20 @@ class HessianFF(object):
                                            size=batch_size, replace=False)
                 self.inputs = inputs[indices]
                 self.targets = targets[indices]
-            assert self.inputs.dtype == self.targets.dtype == np.float32
+            if not(self.inputs.dtype == self.targets.dtype == np.float32):
+                raise TypeError("Input type must be np.float32")
 
             # cache activations
             self.activations = self.forward(self.inputs, self.W)
             self.d_activations = [self.deriv[j](a)
                                   for j, a in enumerate(self.activations)]
 
+            self.GPU_activations = None
             if self.use_GPU:
                 self.GPU_activations = [gpuarray.to_gpu(a)
                                         for a in self.activations]
 
-            assert self.activations[-1].dtype == (np.float32 if not self.debug
-                                                  else np.float64)
+            assert self.activations[-1].dtype == self.dtype
 
             # compute gradient
             grad = self.calc_grad()
@@ -702,6 +792,13 @@ class HessianFF(object):
 
             if i % print_period == 0:
                 print "test error", test_errs[-1]
+
+                if self.neuron_types[-1] == "softmax" and test is not None:
+                    output = self.forward(test[0], self.W)[-1]
+                    class_err = (np.sum(np.argmax(output, axis=1) !=
+                                        np.argmax(test[1], axis=1))
+                                 / float(len(test[0])))
+                    print "classification error", class_err
 
             # dump plot data
             if plotting:

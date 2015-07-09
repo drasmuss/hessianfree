@@ -3,7 +3,7 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 
-filename = r"HF_plots.pkl"
+filename = "HF_plots.pkl"
 with open(filename, "rb") as f:
     plots = pickle.load(f)
 
