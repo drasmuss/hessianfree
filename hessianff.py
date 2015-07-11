@@ -135,9 +135,7 @@ class HessianFF(object):
     def init_GPU(self):
         dev = pycuda.autoinit.device
         print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
-        self.num_threads = (np.int32(1024)
-                            if dev.compute_capability()[0] >= 2 else
-                            np.int32(512))
+        self.num_threads = dev.MAX_THREADS_PER_BLOCK
 
         # this one operation in the gradient/Gv calculations is where
         # most of the computational work can be this algorithm, so
@@ -147,9 +145,9 @@ class HessianFF(object):
                                   int batch_size)
         {
             int a_i = blockIdx.x*blockDim.x + threadIdx.x;
-            int b_i = threadIdx.y;
+            int b_i = blockIdx.y*blockDim.y + threadIdx.y;
             const int a_len = blockDim.x * gridDim.x;
-            const int b_len = blockDim.y;
+            const int b_len = blockDim.y * gridDim.y;
             const int out_addr = a_i*b_len + b_i;
 
             out[out_addr] = 0;
@@ -161,12 +159,42 @@ class HessianFF(object):
         }
         """)
 
-        def outer_sum(a, b):
-            # TODO: shortcut this to CPU if a and b are small
+        def find_block_len(n_threads, threads_per, vec_len):
+            # need to divide n_threads into blocks of size n*threads_per. we
+            # want n to be as large as possible, so we use all the threads in
+            # a block. but vec_len also needs to be evenly divisible by n (I
+            # don't think it's possible to have different sized blocks in
+            # different grid cells). so we want the highest factor of vec_len
+            # that is <= n_threads/threads_per.
+            start = int(n_threads / threads_per)
+
+            if start >= vec_len:
+                return vec_len
+
+            mid = int(np.sqrt(vec_len))
+            for n in range(start, 0 if start < mid else mid - 1, -1):
+                if vec_len % n == 0:
+                    return n
+
+            return 1
+
+        def outer_sum(in_a, in_b):
+            if isinstance(in_a, int):
+                # load pre-cached GPU activations
+                a = self.GPU_activations[in_a]
+            else:
+                a = in_a
+            b = in_b  # b is never cached
 
             a_len = np.int32(a.shape[1])
             b_len = np.int32(b.shape[1])
             batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
+
+            if a_len * b_len < 2 ** 15:
+                # just do it on the CPU
+                if isinstance(in_a, int):
+                    a = self.activations[in_a]
+                return np.ravel(np.einsum("ij,ik", a, b))
 
             out = np.zeros(a_len * b_len, dtype=np.float32)
 
@@ -176,30 +204,10 @@ class HessianFF(object):
                 b = b.astype(np.float32)
 
             assert a.dtype == b.dtype == np.float32
-            assert b_len <= self.num_threads
-            # note: could make this work with longer b's if needed,
-            # would just need to tile horizontally in the same way as
-            # is done vertically
 
-            # we're going to divide the data into n*b_len blocks. we want n
-            # to be as large as possible, so we use all the threads in a block.
-            # but a also needs to be evenly divisible by n (I don't think it's
-            # possible to have different sized blocks in different grid cells).
-            # so we want the highest factor of a that is <= num_threads/b_len.
-            # to be slightly more efficient we'll always search bottom up.
-            # an overly complex procedure for a simple task.
-            start = int(np.ceil(self.num_threads / b_len))
-            stop = int(np.ceil(np.sqrt(a_len)))
-            swap = False
-            if start > stop:
-                swap = True
-                start = np.maximum(1, a_len / start)
-            for f in range(start, stop):
-                if a_len % f == 0:
-                    rows_per_block = f if not swap else a_len / f
-                    break
-            else:
-                rows_per_block = 1
+            cols_per_block = find_block_len(self.num_threads, 1, b_len)
+            rows_per_block = find_block_len(self.num_threads, cols_per_block,
+                                            a_len)
 
             # load data onto gpu (if it isn't there already)
             a_gpu = (a if isinstance(a, gpuarray.GPUArray) else drv.In(a))
@@ -210,8 +218,8 @@ class HessianFF(object):
             # execute function
             gpu_outer = mod.get_function("outer_sum")
             gpu_outer(a_gpu, b_gpu, out_gpu, batchsize,
-                      grid=(a_len / rows_per_block, 1),
-                      block=(rows_per_block, b_len, 1))
+                      grid=(a_len / rows_per_block, b_len / cols_per_block),
+                      block=(rows_per_block, cols_per_block, 1))
 
             if self.debug:
                 if isinstance(a, gpuarray.GPUArray):
@@ -226,7 +234,7 @@ class HessianFF(object):
                     tmp_b = b
                 truth = np.ravel(np.einsum("ij,ik", tmp_a, tmp_b))
                 try:
-                    assert np.allclose(out, truth, atol=1e-6)
+                    assert np.allclose(out, truth, atol=1e-4)
                 except AssertionError:
                     print out
                     print truth
@@ -382,8 +390,7 @@ class HessianFF(object):
         grad = np.zeros(W.size, dtype=self.dtype)
 
         # backpropagate error
-        deltas = [np.zeros(activations[l].shape, dtype=self.dtype)
-                  for l in range(self.n_layers)]
+        deltas = [None for _ in range(self.n_layers)]
 
         if self.error_type == "mse":
             error = activations[-1] - targets
@@ -393,10 +400,10 @@ class HessianFF(object):
         # translate any nans (generated when target == nan) to zero error
         error = np.nan_to_num(error)
 
-        deltas[-1][...] = self.J_dot(d_activations[-1], error)
+        deltas[-1] = self.J_dot(d_activations[-1], error)
 
         for i in range(self.n_layers - 2, -1, -1):
-            error = np.zeros_like(deltas[i])
+            error = np.zeros(activations[i].shape, dtype=self.dtype)
             for post in self.conns[i]:
                 c_error = np.dot(deltas[post],
                                  self.get_weights(W, (i, post))[0].T)
@@ -405,11 +412,11 @@ class HessianFF(object):
                 offset, W_end, b_end = self.offsets[(i, post)]
                 grad[offset:W_end] = self.outer_sum(activations[i]
                                                     if GPU_activations is None
-                                                    else GPU_activations[i],
+                                                    else i,
                                                     deltas[post])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
-            deltas[i][...] = self.J_dot(d_activations[i], error)
+            deltas[i] = self.J_dot(d_activations[i], error)
 
         grad /= inputs.shape[0]
 
@@ -519,8 +526,8 @@ class HessianFF(object):
             Gv = output
 
         # R forward pass
-        R_activations = [np.zeros_like(self.activations[l])
-                         for l in range(self.n_layers)]
+        R_activations = [None for _ in range(self.n_layers)]
+        R_activations[0] = np.zeros_like(self.activations[0])
         for i in range(1, self.n_layers):
             R_input = np.zeros_like(self.activations[i])
             for pre in self.back_conns[i]:
@@ -529,11 +536,10 @@ class HessianFF(object):
                 R_input += np.dot(self.activations[pre], vw) + vb
                 R_input += np.dot(R_activations[pre], Ww)
 
-            R_activations[i][...] = self.J_dot(self.d_activations[i], R_input)
+            R_activations[i] = self.J_dot(self.d_activations[i], R_input)
 
         # backward pass
-        R_deltas = [np.zeros_like(self.activations[l])
-                    for l in range(self.n_layers)]
+        R_deltas = [None for _ in range(self.n_layers)]
 
         if self.error_type == "mse":
             # second derivative of error function is 1
@@ -542,8 +548,8 @@ class HessianFF(object):
             R_error = (R_activations[-1] *
                        self.targets / self.activations[-1] ** 2)
 
-        R_deltas[-1][...] = self.J_dot(self.d_activations[-1],
-                                       R_error)
+        R_deltas[-1] = self.J_dot(self.d_activations[-1],
+                                  R_error)
 
         for i in range(self.n_layers - 2, -1, -1):
             R_error = np.zeros_like(self.activations[i])
@@ -554,11 +560,11 @@ class HessianFF(object):
                 offset, W_end, b_end = self.offsets[(i, post)]
                 Gv[offset:W_end] = self.outer_sum(self.activations[i] if
                                                   self.GPU_activations is None
-                                                  else self.GPU_activations[i],
+                                                  else i,
                                                   R_deltas[post])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
 
-            R_deltas[i][...] = self.J_dot(self.d_activations[i], R_error)
+            R_deltas[i] = self.J_dot(self.d_activations[i], R_error)
 
         Gv /= len(self.inputs)
 
@@ -623,8 +629,6 @@ class HessianFF(object):
             beta = new_res_norm / res_norm
             direction *= beta
             direction += residual
-
-            direction = np.nan_to_num(direction)  # sometimes this underflows
 
             res_norm = new_res_norm
 
