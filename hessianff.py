@@ -31,9 +31,10 @@ class HessianFF(object):
                  error_type="mse"):
         self.use_GPU = use_GPU
         self.debug = debug
-        self.dtype = np.float64 if self.debug else np.float32
-        self.n_layers = len(layers)
         self.layers = layers
+        self.n_layers = len(layers)
+        self.dtype = np.float64 if self.debug else np.float32
+
         self.inputs = None
         self.targets = None
 
@@ -656,7 +657,8 @@ class HessianFF(object):
 
     def run_batches(self, inputs, targets, CG_iter=250, init_damping=1.0,
                     max_epochs=1000, batch_size=None, test=None,
-                    target_err=1e-6, plotting=False):
+                    target_err=1e-6, plotting=False, classification=False,
+                    file_output=None):
         """Apply Hessian-free algorithm with a sequence of minibatches."""
 
         if self.debug:
@@ -676,6 +678,8 @@ class HessianFF(object):
             plot_vars = ["new_err", "l_rate", "np.linalg.norm(delta)",
                          "self.damping", "np.linalg.norm(self.W)",
                          "deltas[-1][0]", "test_errs[-1]"]
+            if classification:
+                plot_vars += ["class_err"]
             for v in plot_vars:
                 plots[v] = []
 
@@ -799,7 +803,7 @@ class HessianFF(object):
             if i % print_period == 0:
                 print "test error", test_errs[-1]
 
-                if self.neuron_types[-1] == "softmax" and test is not None:
+                if classification and test is not None:
                     output = self.forward(test[0], self.W)[-1]
                     class_err = (np.sum(np.argmax(output, axis=1) !=
                                         np.argmax(test[1], axis=1))
@@ -811,12 +815,15 @@ class HessianFF(object):
                 for v in plot_vars:
                     plots[v] += [eval(v)]
 
-                with open("HF_plots.pkl", "wb") as f:
+                with open("%s_plots.pkl" % (file_output
+                                            if file_output is not None
+                                            else "HF"),
+                          "wb") as f:
                     pickle.dump(plots, f)
 
             # dump weights
-            if i % print_period == 0:
-                np.save("HF_weights.npy", self.W)
+            if i % print_period == 0 and file_output is not None:
+                np.save("%s_weights.npy" % file_output, self.W)
 
             # check for termination
             if test_errs[-1] < target_err:

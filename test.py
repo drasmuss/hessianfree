@@ -1,5 +1,6 @@
 import pickle
 import sys
+import ast
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,7 +14,7 @@ def test_xor():
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    ff = HessianFF([2, 5, 1], debug=True, use_GPU=True)
+    ff = HessianFF([2, 5, 1], debug=True, use_GPU=False)
 
     ff.run_batches(inputs, targets, CG_iter=2, max_epochs=40,
                    plotting=True)
@@ -47,14 +48,17 @@ def test_autoencoder():
                    plotting=True)
 
 
-def test_mnist(max_epochs=1000):
+def test_mnist(model_args=None, run_args=None):
     # download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
 
-    ff = HessianFF([28 * 28, 1024, 512, 256, 32, 10], error_type="ce",
-                   neuron_types=["linear"] + ["logistic"] * 4 + ["softmax"],
-                   use_GPU=True, debug=False)
+    if model_args is None:
+        ff = HessianFF([28 * 28, 1024, 512, 256, 32, 10], error_type="ce",
+                       neuron_types=["linear"] + ["logistic"] * 4 + ["softmax"],
+                       use_GPU=False, debug=False)
+    else:
+        ff = HessianFF(**model_args)
 
     inputs = train[0]
     targets = np.zeros((inputs.shape[0], 10), dtype=np.float32)
@@ -64,8 +68,11 @@ def test_mnist(max_epochs=1000):
     tmp[np.arange(test[0].shape[0]), test[1]] = 1
     test = (test[0], tmp)
 
-    ff.run_batches(inputs, targets, CG_iter=250, batch_size=7500,
-                   test=test, max_epochs=max_epochs, plotting=True)
+    if run_args is None:
+        ff.run_batches(inputs, targets, CG_iter=250, batch_size=7500,
+                       test=test, max_epochs=1000, plotting=True)
+    else:
+        ff.run_batches(inputs, targets, test=test, **run_args)
 
     output = ff.forward(test[0], ff.W)[-1]
     class_err = (np.sum(np.argmax(output, axis=1) !=
@@ -151,7 +158,8 @@ def test_profile():
     import cProfile
     import pstats
 
-    cProfile.run("test_mnist(5)", "profilestats")
+    cProfile.run("test_mnist(None, {'max_epochs':5, 'plotting':False, 'batch_size':7500})",
+                 "profilestats")
     p = pstats.Stats("profilestats")
     p.strip_dirs().sort_stats('time').print_stats(20)
 
@@ -234,6 +242,7 @@ if len(sys.argv) < 2:
     test_xor()
 else:
     if "test_%s" % sys.argv[1] in locals():
-        locals()["test_%s" % sys.argv[1]]()
+        locals()["test_%s" % sys.argv[1]](*[ast.literal_eval(a)
+                                            for a in sys.argv[2:]])
     else:
         print "Unknown function (%s)" % sys.argv[1]
