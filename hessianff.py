@@ -41,8 +41,6 @@ class HessianFF(object):
         if isinstance(neuron_types, str):
             neuron_types = [neuron_types for _ in range(self.n_layers)]
             neuron_types[0] = "linear"
-            if error_type == "ce":
-                neuron_types[-1] = "softmax"
 
         if len(neuron_types) != len(layers):
             raise ValueError("Must specify a neuron type for each layer")
@@ -66,10 +64,10 @@ class HessianFF(object):
             elif t == "softmax":
                 def softmax(x):
                     e = np.exp(x)
-                    return e / np.sum(e, axis=1)[:, None]
+                    return e / np.sum(e, axis=-1)[..., None]
                 self.act += [softmax]
-                self.deriv += [lambda a: a[..., None] * (np.eye(a.shape[1]) -
-                                                         a[:, None, :])]
+                self.deriv += [lambda a: a[..., None] * (np.eye(a.shape[-1]) -
+                                                         a[..., None, :])]
             elif isinstance(t, list):
                 if callable[t[0]] and callable[t[1]]:
                     self.act += [t[0]]
@@ -87,6 +85,8 @@ class HessianFF(object):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
                              " with CE error")
+        if error_type == "ce" and self.neuron_types[-1] != "softmax":
+            print "Are you sure you mean to use cross-entropy without softmax?"
         self.error_type = error_type
 
         # add connections
@@ -128,9 +128,7 @@ class HessianFF(object):
         if use_GPU:
             self.init_GPU()
         else:
-            def outer_sum(a, b):
-                return np.ravel(np.einsum("ij,ik", a, b))
-            self.outer_sum = outer_sum
+            self.outer_sum = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
 
     def init_GPU(self):
         dev = pycuda.autoinit.device
@@ -179,9 +177,11 @@ class HessianFF(object):
             return 1
 
         def outer_sum(in_a, in_b):
-            if isinstance(in_a, int):
+            if isinstance(in_a, (list, tuple)):
                 # load pre-cached GPU activations
-                a = self.GPU_activations[in_a]
+                a = self.GPU_activations
+                for idx in in_a:
+                    a = a[idx]
             else:
                 a = in_a
             b = in_b  # b is never cached
@@ -192,8 +192,10 @@ class HessianFF(object):
 
             if a_len * b_len < 2 ** 15:
                 # just do it on the CPU
-                if isinstance(in_a, int):
-                    a = self.activations[in_a]
+                if isinstance(in_a, (list, tuple)):
+                    a = self.activations
+                    for idx in in_a:
+                        a = a[idx]
                 return np.ravel(np.einsum("ij,ik", a, b))
 
             out = np.zeros(a_len * b_len, dtype=np.float32)
@@ -412,7 +414,7 @@ class HessianFF(object):
                 offset, W_end, b_end = self.offsets[(i, post)]
                 grad[offset:W_end] = self.outer_sum(activations[i]
                                                     if GPU_activations is None
-                                                    else i,
+                                                    else [i],
                                                     deltas[post])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
@@ -545,8 +547,8 @@ class HessianFF(object):
             # second derivative of error function is 1
             R_error = R_activations[-1]
         elif self.error_type == "ce":
-            R_error = (R_activations[-1] *
-                       self.targets / self.activations[-1] ** 2)
+            R_error = np.nan_to_num(R_activations[-1] *
+                                    self.targets / self.activations[-1] ** 2)
 
         R_deltas[-1] = self.J_dot(self.d_activations[-1],
                                   R_error)
@@ -560,7 +562,7 @@ class HessianFF(object):
                 offset, W_end, b_end = self.offsets[(i, post)]
                 Gv[offset:W_end] = self.outer_sum(self.activations[i] if
                                                   self.GPU_activations is None
-                                                  else i,
+                                                  else [i],
                                                   R_deltas[post])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
 

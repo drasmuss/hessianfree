@@ -74,12 +74,8 @@ class HessianRNN(HessianFF):
             # then we've just been given a single sample (rather than batch)
             input = input[None, :, :]
 
-        activations = [np.zeros((input.shape[1],
-                                 input.shape[0],
-                                 l),
-                                dtype=(np.float32
-                                       if not self.debug else
-                                       np.float64))
+        activations = [np.zeros((input.shape[1], input.shape[0], l),
+                                dtype=self.dtype)
                        for l in self.layers]
 
         W_recs = [self.get_weights(params, i, recurrent=True)
@@ -111,7 +107,7 @@ class HessianRNN(HessianFF):
         return activations
 
     def error(self, W=None, inputs=None, targets=None):
-        """Compute RMS error."""
+        """Compute network error."""
 
         W = self.W if W is None else W
         inputs = self.inputs if inputs is None else inputs
@@ -129,34 +125,33 @@ class HessianRNN(HessianFF):
 
         if W is self.W and inputs is self.inputs:
             # use cached activations
-            activations = (self.activations
-                           if not self.use_GPU else
-                           self.GPU_activations)
+            activations = self.activations
+            GPU_activations = self.GPU_activations
             d_activations = self.d_activations
         else:
             # compute activations
             activations = self.forward(inputs, W)
+            GPU_activations = None
             d_activations = [self.deriv[i](a)
                              for i, a in enumerate(activations)]
 
-        grad = np.zeros(W.size, dtype=np.float32)
-        deltas = [np.zeros((inputs.shape[0], l), dtype=np.float32)
+        grad = np.zeros(W.size, dtype=self.dtype)
+        deltas = [np.zeros((inputs.shape[0], l), dtype=self.dtype)
                   for l in self.layers]
         W_rec = [self.get_weights(W, l, recurrent=True)
                  for l in np.arange(self.n_layers - 1)]
 
         # backpropagate error
         for s in range(inputs.shape[1] - 1, -1, -1):
-            if isinstance(activations[-1], np.ndarray):
+            if self.error_type == "mse":
                 error = activations[-1][s] - targets[:, s]
-            else:
-                # then it's a GPU array, so use the non-GPU version (we don't
-                # want to do this on the GPU)
-                error = self.activations[-1][s] - targets[:, s]
+            elif self.error_type == "ce":
+                error = -targets[:, s] / activations[-1][s]
 
             error = np.nan_to_num(error)  # zero error where target==nan
 
-            deltas[-1][...] = d_activations[-1][s] * error
+            deltas[-1] = self.J_dot(d_activations[-1][s], error)
+
             for l in range(self.n_layers - 2, -1, -1):
                 # gradient for output weights
                 error = np.zeros_like(deltas[l])
@@ -165,19 +160,25 @@ class HessianRNN(HessianFF):
                                      self.get_weights(W, (l, post))[0].T)
                     error += c_error
                     offset, W_end, b_end = self.offsets[(l, post)]
-                    grad[offset:W_end] += self.outer_sum(activations[l][s],
-                                                         deltas[post])
+                    grad[offset:W_end] += (
+                        self.outer_sum(activations[l][s]
+                                       if GPU_activations is None
+                                       else [l, s],
+                                       deltas[post]))
                     grad[W_end:b_end] += np.sum(deltas[post], axis=0)
 
                 if l > 0:
                     # gradient for recurrent weights
                     error += np.dot(deltas[l], W_rec[l][0].T)
-                    deltas[l][...] = d_activations[l][s] * error
+                    deltas[l] = self.J_dot(d_activations[l][s], error)
 
                     offset, W_end, b_end = self.rec_offsets[l]
                     if s > 0:
                         grad[offset:W_end] += (
-                            self.outer_sum(activations[l][s - 1], deltas[l]))
+                            self.outer_sum(activations[l][s - 1]
+                                           if GPU_activations is None
+                                           else [l, s - 1],
+                                           deltas[l]))
                     else:
                         # put remaining gradient into initial bias
                         grad[W_end:b_end] = np.sum(deltas[l], axis=0)
@@ -204,20 +205,31 @@ class HessianRNN(HessianFF):
             # check_G only works for 1D output at the moment
             assert acts[-1].shape[2] == 1
 
-            base = np.concatenate((acts[-1].squeeze(axis=(1, 2)),
-                                   acts[1][-1].squeeze(axis=0)))
+            base = acts[-1].squeeze(axis=(1, 2))
+#             base = np.concatenate((acts[-1].squeeze(axis=(1, 2)),
+#                                    acts[1][-1].squeeze(axis=0)))
 
-            J = np.zeros((sig_len + self.layers[1], N))
+            J = np.zeros((sig_len, N))
+#             J = np.zeros((sig_len + self.layers[1], N))
             for i in range(N):
                 inc_i = np.zeros(N)
                 inc_i[i] = eps
 
                 acts = self.forward(inputs[b], self.W + inc_i)
-                J[:, i] = (np.concatenate((acts[-1].squeeze(axis=(1, 2)),
-                                           acts[1][-1].squeeze(axis=0))) -
-                           base) / eps
+                J[:, i] = (acts[-1].squeeze(axis=(1, 2)) - base) / eps
+#                 J[:, i] = (np.concatenate((acts[-1].squeeze(axis=(1, 2)),
+#                                            acts[1][-1].squeeze(axis=0))) -
+#                            base) / eps
 
-            L = np.diag([1] * sig_len + [self.struc_damping] * self.layers[1])
+            if self.error_type == "mse":
+                L = np.ones(sig_len)
+            elif self.error_type == "ce":
+                L = targets[b].squeeze(axis=1) / base ** 2
+
+            L = np.diag(L)
+#             L = np.diag(np.concatenate((L,
+#                                         [self.struc_damping] *
+#                                         self.layers[1])))
 
             g += np.dot(np.dot(J.T, np.dot(L, J)), v)
 
@@ -238,7 +250,7 @@ class HessianRNN(HessianFF):
         """Compute Gauss-Newton matrix-vector product."""
 
         if output is None:
-            Gv = np.zeros(self.W.size, dtype=np.float32)
+            Gv = np.zeros(self.W.size, dtype=self.dtype)
         else:
             Gv = output
             Gv[:] = 0
@@ -246,16 +258,17 @@ class HessianRNN(HessianFF):
         sig_len = self.inputs.shape[1]
 
         # R forward pass
-        R_inputs = [np.zeros(self.activations[i].shape, dtype=np.float32)
+        R_inputs = [np.zeros(self.activations[i].shape, dtype=self.dtype)
                     for i in np.arange(self.n_layers)]
-        R_activations = [np.zeros((self.inputs.shape[0], self.layers[i]),
-                                  dtype=np.float32)
-                         for i in np.arange(self.n_layers)]
-        R_outputs = np.zeros(self.activations[-1].shape, dtype=np.float32)
+        R_activations = [None for _ in self.layers]
+        R_outputs = np.zeros_like(self.activations[-1])
         v_recs = [self.get_weights(v, l, recurrent=True)
                   for l in np.arange(self.n_layers - 1)]
         W_recs = [self.get_weights(self.W, l, recurrent=True)
                   for l in np.arange(self.n_layers - 1)]
+
+        R_activations[0] = np.zeros((self.inputs.shape[0], self.layers[0]),
+                                    dtype=self.dtype)
         for s in np.arange(sig_len):
             for l in np.arange(1, self.n_layers):
                 for pre in self.back_conns[l]:
@@ -275,20 +288,26 @@ class HessianRNN(HessianFF):
                                    v_recs[l][0]) +
                             np.dot(R_activations[l], W_recs[l][0]))
 
-                R_activations[l][...] = (self.d_activations[l][s] *
-                                         R_inputs[l][s])
+                R_activations[l] = self.J_dot(self.d_activations[l][s],
+                                              R_inputs[l][s])
 
             # copy output activations so we can reuse to compute error in
             # backwards pass
             R_outputs[s] = R_activations[-1]
 
         # R backward pass
-        R_deltas = [np.zeros((self.inputs.shape[0], self.layers[l]),
-                             dtype=np.float32)
-                    for l in np.arange(self.n_layers)]
+        R_deltas = [np.zeros((self.inputs.shape[0], l), dtype=self.dtype)
+                    for l in self.layers]
         for s in np.arange(sig_len - 1, -1, -1):
             # output layer
-            R_deltas[-1][...] = self.d_activations[-1][s] * R_outputs[s]
+            if self.error_type == "mse":
+                R_error = R_outputs[s]
+            elif self.error_type == "ce":
+                R_error = np.nan_to_num(R_outputs[s] *
+                                        self.targets[:, s] /
+                                        self.activations[-1][s] ** 2)
+            R_deltas[-1] = self.J_dot(self.d_activations[-1][s],
+                                      R_error)
 
             for l in np.arange(self.n_layers - 2, -1, -1):
                 # feedforward gradient
@@ -298,36 +317,31 @@ class HessianRNN(HessianFF):
                     R_error += np.dot(R_deltas[post], W.T)
 
                     offset, W_end, b_end = self.offsets[(l, post)]
-                    if self.use_GPU:
-                        Gv[offset:W_end] += (
-                            self.outer_sum(self.GPU_activations[l][s],
-                                           R_deltas[post]))
-                    else:
-                        Gv[offset:W_end] += (
-                            self.outer_sum(self.activations[l][s],
-                                           R_deltas[post]))
+                    Gv[offset:W_end] += (
+                        self.outer_sum(self.activations[l][s]
+                                       if self.GPU_activations is None
+                                       else [l, s],
+                                       R_deltas[post]))
                     Gv[W_end:b_end] += np.sum(R_deltas[post], axis=0)
 
                 if l > 0:
                     # recurrent gradient
                     R_error += np.dot(R_deltas[l], W_recs[l][0].T)
-                    R_deltas[l][...] = self.d_activations[l][s] * R_error
+                    R_deltas[l] = self.J_dot(self.d_activations[l][s],
+                                             R_error)
 
                     # apply structural damping
-                    R_deltas[l] += (damping * self.struc_damping *
-                                    self.d_activations[l][s] *
-                                    R_inputs[l][s])
+                    R_deltas[l] += self.J_dot(self.d_activations[l][s],
+                                              damping * self.struc_damping *
+                                              R_inputs[l][s])
 
                     offset, W_end, b_end = self.rec_offsets[l]
                     if s > 0:
-                        if self.use_GPU:
-                            Gv[offset:W_end] += (
-                                self.outer_sum(self.GPU_activations[l][s - 1],
-                                               R_deltas[l]))
-                        else:
-                            Gv[offset:W_end] += (
-                                self.outer_sum(self.activations[l][s - 1],
-                                               R_deltas[l]))
+                        Gv[offset:W_end] += (
+                            self.outer_sum(self.activations[l][s - 1]
+                                           if self.GPU_activations is None
+                                           else [l, s - 1],
+                                           R_deltas[l]))
                     else:
                         Gv[W_end:b_end] = np.sum(R_deltas[l], axis=0)
 
