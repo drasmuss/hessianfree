@@ -24,7 +24,8 @@ class HessianRNN(HessianFF):
         # add on recurrent weights
         self.W = np.concatenate(
             (self.W, self.init_weights([(l + 1, l)
-                                        for l in self.layers[1:-1]])))
+                                        for l in self.layers[1:-1]],
+                                       coeff=self.W_init_coeff)))
 
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
@@ -144,11 +145,9 @@ class HessianRNN(HessianFF):
         # backpropagate error
         for s in range(inputs.shape[1] - 1, -1, -1):
             if self.error_type == "mse":
-                error = activations[-1][s] - targets[:, s]
+                error = activations[-1][s] - np.nan_to_num(targets[:, s])
             elif self.error_type == "ce":
-                error = -targets[:, s] / activations[-1][s]
-
-            error = np.nan_to_num(error)  # zero error where target==nan
+                error = -np.nan_to_num(targets[:, s]) / activations[-1][s]
 
             deltas[-1] = self.J_dot(d_activations[-1][s], error)
 
@@ -303,9 +302,9 @@ class HessianRNN(HessianFF):
             if self.error_type == "mse":
                 R_error = R_outputs[s]
             elif self.error_type == "ce":
-                R_error = np.nan_to_num(R_outputs[s] *
-                                        self.targets[:, s] /
-                                        self.activations[-1][s] ** 2)
+                R_error = (R_outputs[s] *
+                           np.nan_to_num(self.targets[:, s]) /
+                           self.activations[-1][s] ** 2)
             R_deltas[-1] = self.J_dot(self.d_activations[-1][s],
                                       R_error)
 

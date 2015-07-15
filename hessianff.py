@@ -28,10 +28,11 @@ except:
 class HessianFF(object):
     def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
                  debug=False, neuron_types="logistic", conns=None,
-                 error_type="mse"):
+                 error_type="mse", W_init_coeff=1.0):
         self.use_GPU = use_GPU
         self.debug = debug
         self.layers = layers
+        self.W_init_coeff = W_init_coeff
         self.n_layers = len(layers)
         self.dtype = np.float64 if self.debug else np.float32
 
@@ -64,8 +65,15 @@ class HessianFF(object):
                 self.deriv += [lambda x: x > 0]
             elif t == "softmax":
                 def softmax(x):
-                    e = np.exp(x)
-                    return e / np.sum(e, axis=-1)[..., None]
+                    e = np.exp(x - np.max(x, axis=-1)[..., None])
+                    # note: shift everything down by max (doesn't change
+                    # result, but can help avoid numerical errors)
+
+                    e /= np.sum(e, axis=-1)[..., None]
+
+                    e[e < 1e-10] = 1e-10
+                    # clip to avoid numerical errors
+                    return e
                 self.act += [softmax]
                 self.deriv += [lambda a: a[..., None] * (np.eye(a.shape[-1]) -
                                                          a[..., None, :])]
@@ -82,12 +90,13 @@ class HessianFF(object):
         if error_type not in ["mse", "ce"]:
             raise ValueError("Unknown error type (%s)" % error_type)
         if (error_type == "ce" and
-            np.any(self.act[-1]([np.linspace(-100, 100, 100)]) <= 0)):
+            np.any(self.act[-1](np.linspace(-80, 80, 100)[None, :]) <= 0)):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
-                             " with CE error")
-        if error_type == "ce" and self.neuron_types[-1] != "softmax":
-            print "Are you sure you mean to use cross-entropy without softmax?"
+                             " with cross-entropy error")
+        if ((error_type == "ce" and self.neuron_types[-1] != "softmax") or
+            (error_type != "ce" and self.neuron_types[-1] == "softmax")):
+            print "Softmax should probably be used with cross-entropy error"
         self.error_type = error_type
 
         # add connections
@@ -122,7 +131,8 @@ class HessianFF(object):
             self.W = self.init_weights([(self.layers[pre] + 1,
                                          self.layers[post])
                                         for pre in self.conns
-                                        for post in self.conns[pre]])
+                                        for post in self.conns[pre]],
+                                       W_init_coeff)
 
         self.compute_offsets()
 
@@ -248,7 +258,7 @@ class HessianFF(object):
 
         self.outer_sum = outer_sum
 
-    def init_weights(self, shapes):
+    def init_weights(self, shapes, coeff=1.0):
         """Weight initialization, given shapes of weight matrices (including
         bias row)."""
 
@@ -257,13 +267,16 @@ class HessianFF(object):
         W = [np.zeros(s, dtype=self.dtype) for s in shapes]
         for i, s in enumerate(shapes):
             for j in range(s[1]):
-                # pick num_conn random pre neurons
-                indices = np.random.choice(np.arange(s[0]),
-                                           size=min(num_conn, s[0]),
+                # pick num_conn random pre neurons (omitting "bias" neuron)
+                indices = np.random.choice(np.arange(s[0] - 1),
+                                           size=min(num_conn, s[0] - 1),
                                            replace=False)
 
                 # connect to post
-                W[i][indices, j] = np.random.randn(indices.size)
+                W[i][indices, j] = np.random.randn(indices.size) * coeff
+            if self.neuron_types[i] in ["tanh", "relu"]:
+                # bias it away from zero
+                W[i][-1, :] = 0.5
         W = np.concatenate([w.flatten() for w in W])
 
         # random initialization
@@ -347,7 +360,7 @@ class HessianFF(object):
             outputs = self.forward(inputs, W)[-1]
 
         if self.error_type == "mse":
-            error = np.sum(np.nan_to_num(outputs - targets) ** 2)
+            error = np.sum((outputs - np.nan_to_num(targets)) ** 2)
             error /= 2 * len(inputs)
         elif self.error_type == "ce":
             nans = np.isnan(targets)
@@ -396,12 +409,10 @@ class HessianFF(object):
         deltas = [None for _ in range(self.n_layers)]
 
         if self.error_type == "mse":
-            error = activations[-1] - targets
+            # translate any nans in target to zero error
+            error = activations[-1] - np.nan_to_num(targets)
         elif self.error_type == "ce":
-            error = -targets / activations[-1]
-
-        # translate any nans (generated when target == nan) to zero error
-        error = np.nan_to_num(error)
+            error = -np.nan_to_num(targets) / activations[-1]
 
         deltas[-1] = self.J_dot(d_activations[-1], error)
 
@@ -548,8 +559,8 @@ class HessianFF(object):
             # second derivative of error function is 1
             R_error = R_activations[-1]
         elif self.error_type == "ce":
-            R_error = np.nan_to_num(R_activations[-1] *
-                                    self.targets / self.activations[-1] ** 2)
+            R_error = (R_activations[-1] *
+                       np.nan_to_num(self.targets) / self.activations[-1] ** 2)
 
         R_deltas[-1] = self.J_dot(self.d_activations[-1],
                                   R_error)
@@ -683,7 +694,10 @@ class HessianFF(object):
             for v in plot_vars:
                 plots[v] = []
 
-            with open("HF_plots.pkl", "wb") as f:
+            with open("%s_plots.pkl" % (file_output
+                                        if file_output is not None
+                                        else "HF"),
+                      "wb") as f:
                 pickle.dump(plots, f)
 
         for i in range(max_epochs):
