@@ -73,6 +73,7 @@ class HessianFF(object):
 
                     e[e < 1e-10] = 1e-10
                     # clip to avoid numerical errors
+
                     return e
                 self.act += [softmax]
                 self.deriv += [lambda a: a[..., None] * (np.eye(a.shape[-1]) -
@@ -94,8 +95,7 @@ class HessianFF(object):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
                              " with cross-entropy error")
-        if ((error_type == "ce" and self.neuron_types[-1] != "softmax") or
-            (error_type != "ce" and self.neuron_types[-1] == "softmax")):
+        if error_type == "ce" and self.neuron_types[-1] != "softmax":
             print "Softmax should probably be used with cross-entropy error"
         self.error_type = error_type
 
@@ -363,9 +363,7 @@ class HessianFF(object):
             error = np.sum((outputs - np.nan_to_num(targets)) ** 2)
             error /= 2 * len(inputs)
         elif self.error_type == "ce":
-            nans = np.isnan(targets)
-            targets[nans] = outputs[nans]
-            error = -np.sum(targets * np.log(outputs))
+            error = -np.sum(np.nan_to_num(targets) * np.log(outputs))
             error /= len(inputs)
 
         return error
@@ -453,9 +451,7 @@ class HessianFF(object):
             grad[i] = (error_inc - error_dec) / (2 * eps)
 
         try:
-            assert np.allclose(grad,
-                               calc_grad,
-                               atol=1e-4)
+            assert np.allclose(grad, calc_grad, rtol=1e-4)
         except AssertionError:
             print calc_grad
             print grad
@@ -523,7 +519,7 @@ class HessianFF(object):
         g += damping * v
 
         try:
-            assert np.allclose(g, calc_G, rtol=0.01)
+            assert np.allclose(g, calc_G, rtol=1e-4)
         except AssertionError:
             print g
             print calc_G
@@ -814,14 +810,16 @@ class HessianFF(object):
             else:
                 test_errs += [new_err]
 
+            if classification:
+                output = self.forward(test[0] if test is not None else inputs,
+                                      self.W)[-1]
+                class_err = np.mean(np.argmax(output, axis=-1) !=
+                                    np.argmax(test[1] if test is not None
+                                              else targets, axis=-1))
+
             if i % print_period == 0:
                 print "test error", test_errs[-1]
-
-                if classification and test is not None:
-                    output = self.forward(test[0], self.W)[-1]
-                    class_err = (np.sum(np.argmax(output, axis=1) !=
-                                        np.argmax(test[1], axis=1))
-                                 / float(len(test[0])))
+                if classification:
                     print "classification error", class_err
 
             # dump plot data
@@ -836,8 +834,8 @@ class HessianFF(object):
                     pickle.dump(plots, f)
 
             # dump weights
-            if i % print_period == 0 and file_output is not None:
-                np.save("%s_weights.npy" % file_output, self.W)
+#             if i % print_period == 0 and file_output is not None:
+#                 np.save("%s_weights.npy" % file_output, self.W)
 
             # check for termination
             if test_errs[-1] < target_err:
