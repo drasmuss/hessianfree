@@ -258,36 +258,33 @@ class HessianFF(object):
 
         self.outer_sum = outer_sum
 
-    def init_weights(self, shapes, coeff=1.0):
+    def init_weights(self, shapes, coeff=1.0, init_type="sparse"):
         """Weight initialization, given shapes of weight matrices (including
         bias row)."""
 
-        # sparse initialization (from martens)
-        num_conn = 15
-        W = [np.zeros(s, dtype=self.dtype) for s in shapes]
-        for i, s in enumerate(shapes):
-            for j in range(s[1]):
-                # pick num_conn random pre neurons (omitting "bias" neuron)
-                indices = np.random.choice(np.arange(s[0] - 1),
-                                           size=min(num_conn, s[0] - 1),
-                                           replace=False)
+        if init_type == "sparse":
+            # sparse initialization (from martens)
+            num_conn = 15
+            W = [np.zeros(s, dtype=self.dtype) for s in shapes]
+            for i, s in enumerate(shapes):
+                for j in range(s[1]):
+                    # pick num_conn random pre neurons (omitting "bias" neuron)
+                    indices = np.random.choice(np.arange(s[0] - 1),
+                                               size=min(num_conn, s[0] - 1),
+                                               replace=False)
 
-                # connect to post
-                W[i][indices, j] = np.random.randn(indices.size) * coeff
-            if self.neuron_types[i] in ["tanh", "relu"]:
-                # bias it away from zero
-                W[i][-1, :] = 0.5
+                    # connect to post
+                    W[i][indices, j] = np.random.randn(indices.size) * coeff
+
+        elif init_type == "uniform":
+            W = [np.zeros(s, dtype=self.dtype) for s in shapes]
+            for i, s in enumerate(shapes):
+                pre_n = s[0] - 1
+                W[i][:-1] = np.random.uniform(-coeff / np.sqrt(pre_n),
+                                              coeff / np.sqrt(pre_n),
+                                              (pre_n, s[1]))
+
         W = np.concatenate([w.flatten() for w in W])
-
-        # random initialization
-#         n_params = [pre * post for pre, post in shapes]
-#         W = np.zeros(np.sum(n_params), dtype=dtype)
-#         for i, s in enumerate(shapes):
-#             offset = np.sum(n_params[:i])
-#             W[offset:offset + n_params[i]] = (
-#                 np.random.uniform(-1 / np.sqrt(s[0]),
-#                                   1 / np.sqrt(s[0]),
-#                                   n_params[i]))
 
         return W
 
@@ -339,7 +336,8 @@ class HessianFF(object):
                 W, b = self.get_weights(params, (pre, i))
                 inputs += np.dot(activations[pre], W) + b
                 # note: we're applying a bias on each connection (rather
-                # than one for each neuron)
+                # than one for each neuron). just because it's easier than
+                # tracking how many connections there are for each layer.
             activations[i] = self.act[i](inputs)
 
         return activations
@@ -501,15 +499,6 @@ class HessianFF(object):
             if self.error_type == "mse":
                 L = np.eye(base.size)
             elif self.error_type == "ce":
-#                 L = np.zeros(base.size)
-#                 for j in range(base.size):
-#                     inc_j = np.zeros(base.size)
-#                     inc_j[j] = eps
-#                     L[j] = ((-np.sum(targets[n] * np.log(base + inc_j)) +
-#                              np.sum(targets[n] * np.log(base))) / eps -
-#                             (-np.sum(targets[n] * np.log(base)) +
-#                              np.sum(targets[n] * np.log(base - inc_j))) / eps) / eps
-#                 assert np.allclose(L, targets[n] / base ** 2, atol=1e-3)
                 L = np.diag((targets[n] / base ** 2).squeeze())
 
             g += np.dot(np.dot(J.T, np.dot(L, J)), v)
