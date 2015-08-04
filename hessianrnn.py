@@ -63,7 +63,7 @@ class HessianRNN(HessianFF):
                 return params[offset:b_end].reshape((self.layers[layer] + 1,
                                                      self.layers[layer]))
 
-    def forward(self, input, params):
+    def forward(self, input, params, deriv=False):
         """Compute activations for given input sequence and parameters."""
 
         # input shape = [batch_size, seq_len, input_dim]
@@ -79,11 +79,20 @@ class HessianRNN(HessianFF):
                                 dtype=self.dtype)
                        for l in self.layers]
 
+        if deriv:
+            d_activations = [np.zeros_like(activations[i])
+                             for i in range(self.n_layers)]
+
         W_recs = [self.get_weights(params, i, recurrent=True)
                   for i in np.arange(self.n_layers)]
         for s in range(input.shape[1]):
             # input activations
             activations[0][s] = self.act[0](input[:, s])
+
+            if deriv:
+                d_activations[0][s] = self.deriv[0](
+                    activations[0][s] if self.layer_types[0].use_activations
+                    else input[:, s])
 
             for i in range(1, self.n_layers):
                 # feedforward input
@@ -104,6 +113,15 @@ class HessianRNN(HessianFF):
                         rec_input = W_recs[i][1]
 
                 activations[i][s] = self.act[i](ff_input + rec_input)
+
+                if deriv:
+                    d_activations[i][s] = self.deriv[i](
+                        activations[i][s] if
+                        self.layer_types[i].use_activations
+                        else ff_input + rec_input)
+
+        if deriv:
+            return activations, d_activations
 
         return activations
 

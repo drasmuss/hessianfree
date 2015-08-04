@@ -5,9 +5,6 @@ Author: Daniel Rasmussen (drasmussen@princeton.edu)
 Based on
 Martens, J. (2010). Deep learning via Hessian-free optimization. In Proceedings
 of the 27th International Conference on Machine Learning.
-
-and Matlab code from James Martens available at
-http://www.cs.toronto.edu/~jmartens/research.html
 """
 
 import pickle
@@ -24,11 +21,13 @@ try:
 except:
     print "PyCuda not installed, or no compatible device detected"
 
+import nonlinearities
+
 
 class HessianFF(object):
     def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
-                 debug=False, neuron_types="logistic", conns=None,
-                 error_type="mse", W_init_coeff=1.0):
+                 debug=False, layer_types=nonlinearities.Logistic(),
+                 conns=None, error_type="mse", W_init_coeff=1.0):
         self.use_GPU = use_GPU
         self.debug = debug
         self.layers = layers
@@ -40,52 +39,25 @@ class HessianFF(object):
         self.targets = None
 
         # set up neural activation functions for each layer
-        if isinstance(neuron_types, str):
-            neuron_types = [neuron_types for _ in range(self.n_layers)]
-            neuron_types[0] = "linear"
+        if not isinstance(layer_types, (list, tuple)):
+            layer_types = [layer_types for _ in range(self.n_layers)]
+            layer_types[0] = nonlinearities.Linear()
 
-        if len(neuron_types) != len(layers):
+        if len(layer_types) != len(layers):
             raise ValueError("Must specify a neuron type for each layer")
 
-        self.neuron_types = neuron_types
+        self.layer_types = []
         self.act = []
         self.deriv = []
-        for t in neuron_types:
-            if t == "logistic":
-                self.act += [expit]
-                self.deriv += [lambda a: a * (1 - a)]
-            elif t == "tanh":
-                self.act += [np.tanh]
-                self.deriv += [lambda a: 1 - a ** 2]
-            elif t == "linear":
-                self.act += [lambda x: x]
-                self.deriv += [np.ones_like]
-            elif t == "relu":
-                self.act += [lambda x: np.maximum(0, x)]
-                self.deriv += [lambda x: x > 0]
-            elif t == "softmax":
-                def softmax(x):
-                    e = np.exp(x - np.max(x, axis=-1)[..., None])
-                    # note: shift everything down by max (doesn't change
-                    # result, but can help avoid numerical errors)
-
-                    e /= np.sum(e, axis=-1)[..., None]
-
-                    e[e < 1e-10] = 1e-10
-                    # clip to avoid numerical errors
-
-                    return e
-                self.act += [softmax]
-                self.deriv += [lambda a: a[..., None] * (np.eye(a.shape[-1]) -
-                                                         a[..., None, :])]
-            elif isinstance(t, list):
-                if callable[t[0]] and callable[t[1]]:
-                    self.act += [t[0]]
-                    self.deriv += [t[1]]
-                else:
-                    raise TypeError("Must specify a function for custom type")
-            else:
-                raise ValueError("Unknown neuron type (%s)" % t)
+        for t in layer_types:
+            if isinstance(t, str):
+                t = getattr(nonlinearities, t)()
+            if not (hasattr(t, "activation") and hasattr(t, "d_activation")):
+                raise TypeError("Neuron type (%s) must provide an activation "
+                                "and derivative function" % t)
+            self.act += [t.activation]
+            self.deriv += [t.d_activation]
+            self.layer_types += [t]
 
         # check error type
         if error_type not in ["mse", "ce"]:
@@ -95,7 +67,8 @@ class HessianFF(object):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
                              " with cross-entropy error")
-        if error_type == "ce" and self.neuron_types[-1] != "softmax":
+        if error_type == "ce" and not isinstance(self.layer_types[-1],
+                                                 nonlinearities.Softmax):
             print "Softmax should probably be used with cross-entropy error"
         self.error_type = error_type
 
@@ -132,7 +105,7 @@ class HessianFF(object):
                                          self.layers[post])
                                         for pre in self.conns
                                         for post in self.conns[pre]],
-                                       W_init_coeff)
+                                       W_init_coeff, init_type="sparse")
 
         self.compute_offsets()
 
@@ -320,7 +293,7 @@ class HessianFF(object):
             return params[offset:b_end].reshape((self.layers[conn[0]] + 1,
                                                  self.layers[conn[1]]))
 
-    def forward(self, input, params):
+    def forward(self, input, params, deriv=False):
         """Compute feedforward activations for given input and parameters."""
 
         if input.ndim < 2:
@@ -329,6 +302,13 @@ class HessianFF(object):
 
         activations = [None for _ in range(self.n_layers)]
         activations[0] = self.act[0](input)
+
+        if deriv:
+            d_activations = [None for _ in range(self.n_layers)]
+            d_activations[0] = self.deriv[0](
+                activations[0] if self.layer_types[0].use_activations
+                else input)
+
         for i in range(1, self.n_layers):
             inputs = np.zeros((input.shape[0], self.layers[i]),
                               dtype=self.dtype)
@@ -339,6 +319,14 @@ class HessianFF(object):
                 # than one for each neuron). just because it's easier than
                 # tracking how many connections there are for each layer.
             activations[i] = self.act[i](inputs)
+
+            if deriv:
+                d_activations[i] = self.deriv[i](
+                    activations[i] if self.layer_types[i].use_activations
+                    else inputs)
+
+        if deriv:
+            return activations, d_activations
 
         return activations
 
@@ -394,10 +382,9 @@ class HessianFF(object):
             d_activations = self.d_activations
         else:
             # compute activations
-            activations = self.forward(inputs, W)
-            GPU_activations = None
-            d_activations = [self.deriv[i](a)
-                             for i, a in enumerate(activations)]
+            self.activations, self.d_activations = self.forward(inputs, W,
+                                                                deriv=True)
+            self.GPU_activations = None
 
         grad = np.zeros(W.size, dtype=self.dtype)
 
@@ -449,7 +436,7 @@ class HessianFF(object):
             grad[i] = (error_inc - error_dec) / (2 * eps)
 
         try:
-            assert np.allclose(grad, calc_grad, rtol=1e-4)
+            assert np.allclose(grad, calc_grad, rtol=1e-3)
         except AssertionError:
             print calc_grad
             print grad
@@ -464,10 +451,10 @@ class HessianFF(object):
         self.targets = targets
 
         # calculate activations
-        self.activations = self.forward(self.inputs, self.W)
+        self.activations, self.d_activations = self.forward(self.inputs,
+                                                            self.W,
+                                                            deriv=True)
         self.GPU_activations = None
-        self.d_activations = [self.deriv[i](a)
-                              for i, a in enumerate(self.activations)]
 
         # compute gradient
         grad = self.calc_grad()
@@ -508,7 +495,7 @@ class HessianFF(object):
         g += damping * v
 
         try:
-            assert np.allclose(g, calc_G, rtol=1e-4)
+            assert np.allclose(g, calc_G, rtol=1e-3)
         except AssertionError:
             print g
             print calc_G
@@ -703,10 +690,9 @@ class HessianFF(object):
                 raise TypeError("Input type must be np.float32")
 
             # cache activations
-            self.activations = self.forward(self.inputs, self.W)
-            self.d_activations = [self.deriv[j](a)
-                                  for j, a in enumerate(self.activations)]
-
+            self.activations, self.d_activations = self.forward(self.inputs,
+                                                                self.W,
+                                                                deriv=True)
             self.GPU_activations = None
             if self.use_GPU:
                 self.GPU_activations = [gpuarray.to_gpu(a)
@@ -751,7 +737,7 @@ class HessianFF(object):
             denom = (0.5 * np.dot(delta, self.G(delta, damping=0)) +
                      np.dot(grad, delta))
 
-            improvement_ratio = (new_err - err) / denom
+            improvement_ratio = (new_err - err) / denom if denom > 0 else 1
             if improvement_ratio < 0.25:
                 self.damping *= 1.5
             elif improvement_ratio > 0.75:

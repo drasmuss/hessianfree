@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from hessianff import HessianFF
 from hessianrnn import HessianRNN
 
+from nonlinearities import *
+
 
 def test_xor():
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
@@ -31,53 +33,38 @@ def test_xor():
         print "output", ff.forward(i, ff.W)[-1]
 
 
-def test_autoencoder():
-    inputs = np.eye(10, dtype=np.float32)
-    targets = inputs
-
-    ff = HessianFF([10, 5, 10], neuron_types=["linear", "tanh", "softmax"],
-                   error_type="ce",
-                   debug=True, use_GPU=True)
-
-#     for i in range(10000):
-#         if i % 100 == 0:
-#             print "iteration", i
-#         ff.gradient_descent(inputs, targets, l_rate=1)
-
-    ff.run_batches(inputs, targets, CG_iter=50, max_epochs=100,
-                   plotting=True)
-
-
 def test_mnist(model_args=None, run_args=None):
     # download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
 
     if model_args is None:
-        ff = HessianFF([28 * 28, 1024, 512, 256, 32, 10], error_type="ce",
-                       neuron_types=["linear"] + ["logistic"] * 4 + ["softmax"],
-                       use_GPU=False, debug=False)
+        ff = HessianFF([28 * 28, 1024, 512, 256, 32, 10], error_type="mse",
+                       layer_types=[Linear()] + [ReLU()] * 4 + [Softmax()],
+                       use_GPU=True, debug=False)
     else:
         ff = HessianFF(**model_args)
 
     inputs = train[0]
     targets = np.zeros((inputs.shape[0], 10), dtype=np.float32)
-    targets[np.arange(inputs.shape[0]), train[1]] = 1
+    targets[np.arange(inputs.shape[0]), train[1]] = 0.9
+    targets += 0.01
 
     tmp = np.zeros((test[0].shape[0], 10), dtype=np.float32)
-    tmp[np.arange(test[0].shape[0]), test[1]] = 1
+    tmp[np.arange(test[0].shape[0]), test[1]] = 0.9
+    tmp += 0.01
     test = (test[0], tmp)
 
     if run_args is None:
         ff.run_batches(inputs, targets, CG_iter=250, batch_size=7500,
-                       test=test, max_epochs=1000, plotting=True)
+                       test=test, max_epochs=1000, init_damping=45,
+                       plotting=True, classification=True)
     else:
         ff.run_batches(inputs, targets, test=test, **run_args)
 
     output = ff.forward(test[0], ff.W)[-1]
-    class_err = (np.sum(np.argmax(output, axis=1) !=
+    class_err = np.mean(np.argmax(output, axis=1) !=
                         np.argmax(test[1], axis=1))
-                 / float(len(test[0])))
     print "classification error", class_err
 
 
@@ -140,7 +127,7 @@ def test_cifar():
     test[1] = tmp
 
     ff = HessianFF([dim * dim * 3, 1024, 512, 256, 32, 10],
-                   neuron_types=["linear"] + ["tanh"] * 4 + ["softmax"],
+                   layer_types=[Linear()] + [Tanh()] * 4 + [Softmax()],
                    error_type="ce", use_GPU=True,
                    debug=False, load_weights=None)
 
@@ -151,6 +138,31 @@ def test_cifar():
     class_err = np.mean(np.argmax(output, axis=1) !=
                         np.argmax(test[1], axis=1))
     print "classification error", class_err
+
+
+def test_softlif():
+    lifs = SoftLIF(sigma=1, tau_ref=0.002, tau_rc=0.02, amp=0.01)
+
+    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
+                        dtype=np.float32)
+    targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
+
+    ff = HessianFF([2, 10, 1], layer_types=lifs,
+                   debug=True, use_GPU=False)
+
+    ff.run_batches(inputs, targets, CG_iter=50, max_epochs=50,
+                   plotting=True)
+
+    # using gradient descent (for comparison)
+#     for i in range(10000):
+#         if i % 100 == 0:
+#             print "iteration", i
+#         ff.gradient_descent(inputs, targets, l_rate=1)
+
+    for i, t in zip(inputs, targets):
+        print "input", i
+        print "target", t
+        print "output", ff.forward(i, ff.W)[-1]
 
 
 def test_profile():
@@ -183,12 +195,12 @@ def test_GPU():
 
             start = time.time()
             for _ in range(reps):
-                out = cpu(x, y)
+                _ = cpu(x, y)
             times[n, b, 0] = time.time() - start
 
             start = time.time()
             for _ in range(reps):
-                out = gpu(x, y)
+                _ = gpu(x, y)
             times[n, b, 1] = time.time() - start
 
             print "n", n, "b", b, "times", times[n, b]
@@ -210,7 +222,7 @@ def test_integrator():
     test = (inputs, targets)
 
     rnn = HessianRNN(layers=[1, 10, 10, 1], struc_damping=0.0,
-                     neuron_types="logistic", error_type="mse",
+                     layer_types=Logistic(), error_type="mse",
                      conns={0: [1, 2], 1: [2], 2: [3]},
                      use_GPU=False, debug=False)
 
