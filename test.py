@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from hessianff import HessianFF
 from hessianrnn import HessianRNN
 
-from nonlinearities import *
+from nonlinearities import Logistic, Tanh, Softmax, SoftLIF, ReLU, Continuous
 
 
 def test_xor():
@@ -221,7 +221,7 @@ def test_integrator():
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(layers=[1, 10, 10, 1], struc_damping=0.0,
+    rnn = HessianRNN(shape=[1, 10, 10, 1], struc_damping=0.0,
                      layer_types=Logistic(), error_type="mse",
                      conns={0: [1, 2], 1: [2], 2: [3]},
                      use_GPU=False, debug=False)
@@ -232,6 +232,48 @@ def test_integrator():
     # using gradient descent (for comparison)
 #     for i in range(10000):
 #         if i % 100 == 0:
+#             print "iteration", i
+#         rnn.gradient_descent(inputs, targets, l_rate=0.1)
+
+    plt.figure()
+    plt.plot(inputs.squeeze().T)
+    plt.title("inputs")
+
+    plt.figure()
+    plt.plot(targets.squeeze().T)
+    plt.title("targets")
+
+    outputs = rnn.forward(inputs, rnn.W)[-1]
+    plt.figure()
+    plt.plot(outputs.squeeze())
+    plt.title("outputs")
+
+    plt.show()
+
+
+def test_continuous():
+    n_inputs = 10
+    sig_len = 50
+    nl = Continuous(Logistic(), sig_len, tau=2.0)
+    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                      np.ones(sig_len))[:, :, None]
+    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                       np.linspace(0, 1, sig_len))[:, :, None]
+    inputs = inputs.astype(np.float32)
+    targets = targets.astype(np.float32)
+
+    test = (inputs, targets)
+
+    rnn = HessianRNN(shape=[1, 10, 1], struc_damping=0.0,
+                     layer_types=nl,
+                     use_GPU=False, debug=False)
+
+    rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
+                    test=test, max_epochs=100, plotting=True)
+
+    # using gradient descent (for comparison)
+#     for i in range(10000):
+#         if i % 10 == 0:
 #             print "iteration", i
 #         rnn.gradient_descent(inputs, targets, l_rate=0.1)
 

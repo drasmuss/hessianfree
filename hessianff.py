@@ -9,6 +9,7 @@ of the 27th International Conference on Machine Learning.
 
 import pickle
 from collections import defaultdict, OrderedDict
+from copy import deepcopy
 
 from scipy.special import expit
 import numpy as np
@@ -25,25 +26,25 @@ import nonlinearities
 
 
 class HessianFF(object):
-    def __init__(self, layers=[1, 1, 1], use_GPU=False, load_weights=None,
-                 debug=False, layer_types=nonlinearities.Logistic(),
-                 conns=None, error_type="mse", W_init_coeff=1.0):
+    def __init__(self, shape=[1, 1, 1], layer_types=nonlinearities.Logistic(),
+                 conns=None, error_type="mse", W_init_coeff=1.0,
+                 use_GPU=False, load_weights=None, debug=False):
         self.use_GPU = use_GPU
         self.debug = debug
-        self.layers = layers
+        self.shape = shape
         self.W_init_coeff = W_init_coeff
-        self.n_layers = len(layers)
-        self.dtype = np.float64 if self.debug else np.float32
+        self.n_layers = len(shape)
+        self.dtype = np.float64 if debug else np.float32
 
         self.inputs = None
         self.targets = None
 
         # set up neural activation functions for each layer
         if not isinstance(layer_types, (list, tuple)):
-            layer_types = [layer_types for _ in range(self.n_layers)]
+            layer_types = [deepcopy(layer_types) for _ in range(self.n_layers)]
             layer_types[0] = nonlinearities.Linear()
 
-        if len(layer_types) != len(layers):
+        if len(layer_types) != len(shape):
             raise ValueError("Must specify a neuron type for each layer")
 
         self.layer_types = []
@@ -101,8 +102,8 @@ class HessianFF(object):
                 raise TypeError("Weights from file don't match self.dtype (%s)"
                                 % self.dtype)
         else:
-            self.W = self.init_weights([(self.layers[pre] + 1,
-                                         self.layers[post])
+            self.W = self.init_weights([(self.shape[pre] + 1,
+                                         self.shape[post])
                                         for pre in self.conns
                                         for post in self.conns[pre]],
                                        W_init_coeff, init_type="sparse")
@@ -264,17 +265,17 @@ class HessianFF(object):
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
 
-        n_params = [(self.layers[pre] + 1) * self.layers[post]
+        n_params = [(self.shape[pre] + 1) * self.shape[post]
                     for pre in self.conns
                     for post in self.conns[pre]]
         self.offsets = {}
         offset = 0
         for pre in self.conns:
             for post in self.conns[pre]:
-                n_params = (self.layers[pre] + 1) * self.layers[post]
+                n_params = (self.shape[pre] + 1) * self.shape[post]
                 self.offsets[(pre, post)] = (
                     offset,
-                    offset + n_params - self.layers[post],
+                    offset + n_params - self.shape[post],
                     offset + n_params)
                 offset += n_params
 
@@ -286,12 +287,12 @@ class HessianFF(object):
             W = params[offset:W_end]
             b = params[W_end:b_end]
 
-            return (W.reshape((self.layers[conn[0]],
-                               self.layers[conn[1]])),
+            return (W.reshape((self.shape[conn[0]],
+                               self.shape[conn[1]])),
                     b)
         else:
-            return params[offset:b_end].reshape((self.layers[conn[0]] + 1,
-                                                 self.layers[conn[1]]))
+            return params[offset:b_end].reshape((self.shape[conn[0]] + 1,
+                                                 self.shape[conn[1]]))
 
     def forward(self, input, params, deriv=False):
         """Compute feedforward activations for given input and parameters."""
@@ -299,6 +300,13 @@ class HessianFF(object):
         if input.ndim < 2:
             # then we've just been given a single sample (rather than batch)
             input = input[None, :]
+
+        for l in self.layer_types:
+            if isinstance(l, Continuous):
+                print ("Are you sure you mean to use a continuous layer type "
+                       "with a single-step feedforward net?")
+
+            l.reset()
 
         activations = [None for _ in range(self.n_layers)]
         activations[0] = self.act[0](input)
@@ -310,7 +318,7 @@ class HessianFF(object):
                 else input)
 
         for i in range(1, self.n_layers):
-            inputs = np.zeros((input.shape[0], self.layers[i]),
+            inputs = np.zeros((input.shape[0], self.shape[i]),
                               dtype=self.dtype)
             for pre in self.back_conns[i]:
                 W, b = self.get_weights(params, (pre, i))

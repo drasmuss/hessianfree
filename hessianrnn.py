@@ -11,6 +11,7 @@ Machine Learning.
 import numpy as np
 
 from hessianff import HessianFF
+from nonlinearities import Continuous
 
 
 class HessianRNN(HessianFF):
@@ -24,7 +25,7 @@ class HessianRNN(HessianFF):
         # add on recurrent weights
         self.W = np.concatenate(
             (self.W, self.init_weights([(l + 1, l)
-                                        for l in self.layers[1:-1]],
+                                        for l in self.shape[1:-1]],
                                        coeff=self.W_init_coeff)))
 
     def compute_offsets(self):
@@ -36,12 +37,12 @@ class HessianRNN(HessianFF):
 
         for l in range(1, self.n_layers - 1):
             offset = (len(self.W) +  # note: gets called before rec_W added
-                      np.sum([(self.layers[i] + 1) * self.layers[i]
+                      np.sum([(self.shape[i] + 1) * self.shape[i]
                               for i in range(1, l)]))
             self.rec_offsets[l] = (
                 offset,
-                offset + self.layers[l] * self.layers[l],
-                offset + (self.layers[l] + 1) * self.layers[l])
+                offset + self.shape[l] * self.shape[l],
+                offset + (self.shape[l] + 1) * self.shape[l])
 
     def get_weights(self, params, layer, separate=True, recurrent=False):
         """Get weight matrix for a layer from the overall parameter vector."""
@@ -56,12 +57,12 @@ class HessianRNN(HessianFF):
                 W = params[offset:W_end]
                 b = params[W_end:b_end]
 
-                return (W.reshape((self.layers[layer],
-                                   self.layers[layer])),
+                return (W.reshape((self.shape[layer],
+                                   self.shape[layer])),
                         b)
             else:
-                return params[offset:b_end].reshape((self.layers[layer] + 1,
-                                                     self.layers[layer]))
+                return params[offset:b_end].reshape((self.shape[layer] + 1,
+                                                     self.shape[layer]))
 
     def forward(self, input, params, deriv=False):
         """Compute activations for given input sequence and parameters."""
@@ -75,9 +76,12 @@ class HessianRNN(HessianFF):
             # then we've just been given a single sample (rather than batch)
             input = input[None, :, :]
 
+        for l in self.layer_types:
+            l.reset()
+
         activations = [np.zeros((input.shape[1], input.shape[0], l),
                                 dtype=self.dtype)
-                       for l in self.layers]
+                       for l in self.shape]
 
         if deriv:
             d_activations = [np.zeros_like(activations[i])
@@ -149,14 +153,12 @@ class HessianRNN(HessianFF):
             d_activations = self.d_activations
         else:
             # compute activations
-            activations = self.forward(inputs, W)
+            activations, d_activations = self.forward(input, W, deriv=True)
             GPU_activations = None
-            d_activations = [self.deriv[i](a)
-                             for i, a in enumerate(activations)]
 
         grad = np.zeros(W.size, dtype=self.dtype)
         deltas = [np.zeros((inputs.shape[0], l), dtype=self.dtype)
-                  for l in self.layers]
+                  for l in self.shape]
         W_rec = [self.get_weights(W, l, recurrent=True)
                  for l in np.arange(self.n_layers - 1)]
 
@@ -167,10 +169,15 @@ class HessianRNN(HessianFF):
             elif self.error_type == "ce":
                 error = -np.nan_to_num(targets[:, s]) / activations[-1][s]
 
-            deltas[-1] = self.J_dot(d_activations[-1][s], error)
+            if self.layer_types[-1].d_state is None:
+                deltas[-1] = self.J_dot(d_activations[-1][s], error)
+            else:
+                deltas[-1] = (self.J_dot(d_activations[-1][s], error) +
+                              self.layer_types[-1].d_state * deltas[-1])
+
 
             for l in range(self.n_layers - 2, -1, -1):
-                # gradient for output weights
+                # gradient for feedforward weights
                 error = np.zeros_like(deltas[l])
                 for post in self.conns[l]:
                     c_error = np.dot(deltas[post],
@@ -187,7 +194,12 @@ class HessianRNN(HessianFF):
                 if l > 0:
                     # gradient for recurrent weights
                     error += np.dot(deltas[l], W_rec[l][0].T)
-                    deltas[l] = self.J_dot(d_activations[l][s], error)
+                    if self.layer_types[l].d_state is None:
+                        deltas[l] = self.J_dot(d_activations[l][s], error)
+                    else:
+                        deltas[l] = (self.J_dot(d_activations[l][s], error) +
+                            self.layer_types[l].d_state * deltas[l])
+
 
                     offset, W_end, b_end = self.rec_offsets[l]
                     if s > 0:
@@ -227,7 +239,7 @@ class HessianRNN(HessianFF):
 #                                    acts[1][-1].squeeze(axis=0)))
 
             J = np.zeros((sig_len, N))
-#             J = np.zeros((sig_len + self.layers[1], N))
+#             J = np.zeros((sig_len + self.shape[1], N))
             for i in range(N):
                 inc_i = np.zeros(N)
                 inc_i[i] = eps
@@ -246,7 +258,7 @@ class HessianRNN(HessianFF):
             L = np.diag(L)
 #             L = np.diag(np.concatenate((L,
 #                                         [self.struc_damping] *
-#                                         self.layers[1])))
+#                                         self.shape[1])))
 
             g += np.dot(np.dot(J.T, np.dot(L, J)), v)
 
@@ -255,7 +267,7 @@ class HessianRNN(HessianFF):
         g += damping * v
 
         try:
-            assert np.allclose(g, calc_G, atol=1e-6)
+            assert np.allclose(g, calc_G, rtol=1e-3)
         except AssertionError:
             print g
             print calc_G
@@ -277,14 +289,14 @@ class HessianRNN(HessianFF):
         # R forward pass
         R_inputs = [np.zeros(self.activations[i].shape, dtype=self.dtype)
                     for i in np.arange(self.n_layers)]
-        R_activations = [None for _ in self.layers]
+        R_activations = [None for _ in self.shape]
         R_outputs = np.zeros_like(self.activations[-1])
         v_recs = [self.get_weights(v, l, recurrent=True)
                   for l in np.arange(self.n_layers - 1)]
         W_recs = [self.get_weights(self.W, l, recurrent=True)
                   for l in np.arange(self.n_layers - 1)]
 
-        R_activations[0] = np.zeros((self.inputs.shape[0], self.layers[0]),
+        R_activations[0] = np.zeros((self.inputs.shape[0], self.shape[0]),
                                     dtype=self.dtype)
         for s in np.arange(sig_len):
             for l in np.arange(1, self.n_layers):
@@ -294,6 +306,11 @@ class HessianRNN(HessianFF):
                     R_inputs[l][s] += np.dot(self.activations[pre][s],
                                              vw) + vb
                     R_inputs[l][s] += np.dot(R_activations[pre], Ww)
+
+                if isinstance(self.layer_types[l], Continuous):
+                    # TODO: general case for this (like d_state)?
+                    R_inputs[l][s] += (R_inputs[l][s - 1] *
+                                       self.layer_types[l].coeff)
 
                 if l < self.n_layers - 1:
                     # add recurrent input
@@ -314,7 +331,7 @@ class HessianRNN(HessianFF):
 
         # R backward pass
         R_deltas = [np.zeros((self.inputs.shape[0], l), dtype=self.dtype)
-                    for l in self.layers]
+                    for l in self.shape]
         for s in np.arange(sig_len - 1, -1, -1):
             # output layer
             if self.error_type == "mse":
@@ -323,8 +340,14 @@ class HessianRNN(HessianFF):
                 R_error = (R_outputs[s] *
                            np.nan_to_num(self.targets[:, s]) /
                            self.activations[-1][s] ** 2)
-            R_deltas[-1] = self.J_dot(self.d_activations[-1][s],
-                                      R_error)
+
+            if self.layer_types[-1].d_state is None:
+                R_deltas[-1] = self.J_dot(self.d_activations[-1][s], R_error)
+            else:
+                R_deltas[-1] = (self.J_dot(self.d_activations[-1][s],
+                                           R_error) +
+                                self.layer_types[-1].d_state * R_deltas[-1])
+
 
             for l in np.arange(self.n_layers - 2, -1, -1):
                 # feedforward gradient
@@ -344,8 +367,16 @@ class HessianRNN(HessianFF):
                 if l > 0:
                     # recurrent gradient
                     R_error += np.dot(R_deltas[l], W_recs[l][0].T)
-                    R_deltas[l] = self.J_dot(self.d_activations[l][s],
-                                             R_error)
+
+                    if self.layer_types[l].d_state is None:
+                        R_deltas[l] = self.J_dot(self.d_activations[l][s],
+                                                 R_error)
+                    else:
+                        R_deltas[l] = (self.J_dot(self.d_activations[l][s],
+                                                   R_error) +
+                                       self.layer_types[l].d_state *
+                                       R_deltas[l])
+
 
                     # apply structural damping
                     R_deltas[l] += self.J_dot(self.d_activations[l][s],

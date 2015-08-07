@@ -2,37 +2,63 @@ import numpy as np
 from scipy.special import expit
 
 
-class Logistic:
+class Nonlinearity(object):
+    def __init__(self, use_activations=True):
+        # use_activations denotes whether the d_activation function takes
+        # activations as input or the same input as the activation function
+        self.use_activations = use_activations
+
+        # the derivative of state_t+1 with respect to state_t (for
+        # nonlinearities that have state)
+        self.d_state = None
+
+    def activation(self, x):
+        """Applies the nonlinearity to the inputs."""
+
+        raise NotImplementedError()
+
+    def d_activation(self, x):
+        """The derivative of the nonlinearity with respect to the inputs."""
+
+        # note: if self.use_activations is True, then the input here will
+        # be self.activations(input), rather than the direct inputs
+        raise NotImplementedError()
+
+    def reset(self):
+        pass
+
+
+class Logistic(Nonlinearity):
     def __init__(self):
+        super(Logistic, self).__init__()
         self.activation = expit
         self.d_activation = lambda a: a * (1 - a)
-        self.use_activations = True
 
 
-class Tanh:
+class Tanh(Nonlinearity):
     def __init__(self):
+        super(Tanh, self).__init__()
         self.activation = np.tanh
         self.d_activation = lambda a: 1 - a ** 2
-        self.use_activations = True
 
 
-class Linear:
+class Linear(Nonlinearity):
     def __init__(self):
+        super(Linear, self).__init__()
         self.activation = lambda x: x
         self.d_activation = np.ones_like
-        self.use_activations = True
 
 
-class ReLU:
+class ReLU(Nonlinearity):
     def __init__(self):
+        super(ReLU, self).__init__()
         self.activation = lambda x: np.maximum(0, x)
         self.d_activation = lambda a: a > 0
-        self.use_activations = True
 
 
-class Softmax:
+class Softmax(Nonlinearity):
     def __init__(self):
-        self.use_activations = True
+        super(Logistic, self).__init__()
 
     def activation(self, x):
         e = np.exp(x - np.max(x, axis=-1)[..., None])
@@ -50,13 +76,13 @@ class Softmax:
         return a[..., None] * (np.eye(a.shape[-1]) - a[..., None, :])
 
 
-class SoftLIF:
+class SoftLIF(Nonlinearity):
     def __init__(self, sigma=1, tau_rc=0.02, tau_ref=0.002, amp=1):
+        super(Logistic, self).__init__(use_activations=False)
         self.sigma = sigma
         self.tau_rc = tau_rc
         self.tau_ref = tau_ref
         self.amp = amp
-        self.use_activations = False
 
     def softrelu(self, x):
         y = x / self.sigma
@@ -85,3 +111,43 @@ class SoftLIF:
         d[j > 0] = (self.tau_rc * rr * rr) / (
             self.amp * jj * (jj + 1) * (1 + np.exp(-xx / self.sigma)))
         return d
+
+
+class Continuous(Nonlinearity):
+    def __init__(self, base, sig_len, tau=1.0, dt=1.0):
+        super(Continuous, self).__init__(use_activations=False)
+        self.base = base
+        self.sig_len = sig_len
+        self.tau = tau
+        self.dt = dt
+        self.coeff = dt / tau
+
+        self.d_state = 1 - self.coeff
+
+        self.reset()
+
+    def activation(self, x):
+        self.act_count += 1
+
+        self.state += (x - self.state) * self.coeff
+
+        return self.base.activation(self.state)
+
+    def d_activation(self, x):
+        self.d_act_count += 1
+
+        # sanity check that self.inputs is in sync
+        assert self.act_count == self.d_act_count
+
+        act_d = self.base.d_activation(self.base.activation(self.state) if
+                                       self.base.use_activations else
+                                       self.inputs)
+
+        state_d = self.coeff
+
+        return act_d * state_d
+
+    def reset(self):
+        self.state = 0.0
+        self.act_count = 0
+        self.d_act_count = 0
