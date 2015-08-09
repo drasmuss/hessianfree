@@ -26,7 +26,7 @@ import nonlinearities
 
 
 class HessianFF(object):
-    def __init__(self, shape=[1, 1, 1], layer_types=nonlinearities.Logistic(),
+    def __init__(self, shape, layer_types=nonlinearities.Logistic(),
                  conns=None, error_type="mse", W_init_coeff=1.0,
                  use_GPU=False, load_weights=None, debug=False):
         self.use_GPU = use_GPU
@@ -302,30 +302,28 @@ class HessianFF(object):
             input = input[None, :]
 
         for l in self.layer_types:
-            if isinstance(l, Continuous):
+            if isinstance(l, nonlinearities.Continuous):
                 print ("Are you sure you mean to use a continuous layer type "
                        "with a single-step feedforward net?")
 
             l.reset()
 
         activations = [None for _ in range(self.n_layers)]
-        activations[0] = self.act[0](input)
-
         if deriv:
             d_activations = [None for _ in range(self.n_layers)]
-            d_activations[0] = self.deriv[0](
-                activations[0] if self.layer_types[0].use_activations
-                else input)
 
-        for i in range(1, self.n_layers):
-            inputs = np.zeros((input.shape[0], self.shape[i]),
-                              dtype=self.dtype)
-            for pre in self.back_conns[i]:
-                W, b = self.get_weights(params, (pre, i))
-                inputs += np.dot(activations[pre], W) + b
-                # note: we're applying a bias on each connection (rather
-                # than one for each neuron). just because it's easier than
-                # tracking how many connections there are for each layer.
+        for i in range(self.n_layers):
+            if i == 0:
+                inputs = input
+            else:
+                inputs = np.zeros((input.shape[0], self.shape[i]),
+                                  dtype=self.dtype)
+                for pre in self.back_conns[i]:
+                    W, b = self.get_weights(params, (pre, i))
+                    inputs += np.dot(activations[pre], W) + b
+                    # note: we're applying a bias on each connection (rather
+                    # than one for each neuron). just because it's easier than
+                    # tracking how many connections there are for each layer.
             activations[i] = self.act[i](inputs)
 
             if deriv:
@@ -415,10 +413,9 @@ class HessianFF(object):
                 error += c_error
 
                 offset, W_end, b_end = self.offsets[(i, post)]
-                grad[offset:W_end] = self.outer_sum(activations[i]
-                                                    if GPU_activations is None
-                                                    else [i],
-                                                    deltas[post])
+                grad[offset:W_end] = self.outer_sum(
+                    activations[i] if GPU_activations is None else [i],
+                    deltas[post])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
             deltas[i] = self.J_dot(d_activations[i], error)
@@ -542,8 +539,7 @@ class HessianFF(object):
             R_error = (R_activations[-1] *
                        np.nan_to_num(self.targets) / self.activations[-1] ** 2)
 
-        R_deltas[-1] = self.J_dot(self.d_activations[-1],
-                                  R_error)
+        R_deltas[-1] = self.J_dot(self.d_activations[-1], R_error)
 
         for i in range(self.n_layers - 2, -1, -1):
             R_error = np.zeros_like(self.activations[i])
@@ -552,10 +548,9 @@ class HessianFF(object):
                 R_error += np.dot(R_deltas[post], W.T)
 
                 offset, W_end, b_end = self.offsets[(i, post)]
-                Gv[offset:W_end] = self.outer_sum(self.activations[i] if
-                                                  self.GPU_activations is None
-                                                  else [i],
-                                                  R_deltas[post])
+                Gv[offset:W_end] = self.outer_sum(
+                    self.activations[i] if self.GPU_activations is None
+                    else [i], R_deltas[post])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
 
             R_deltas[i] = self.J_dot(self.d_activations[i], R_error)
