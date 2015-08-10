@@ -11,7 +11,6 @@ Machine Learning.
 import numpy as np
 
 from hessianff import HessianFF
-from nonlinearities import Continuous
 
 
 class HessianRNN(HessianFF):
@@ -19,6 +18,7 @@ class HessianRNN(HessianFF):
         self.struc_damping = struc_damping
 
         if rec_layers is None:
+            # assume all recurrent except first/last layer
             rec_layers = [False] + [True] * (len(shape) - 2) + [False]
         self.rec_layers = rec_layers
 
@@ -138,6 +138,9 @@ class HessianRNN(HessianFF):
         W = self.W if W is None else W
         inputs = self.inputs if inputs is None else inputs
         targets = self.targets if targets is None else targets
+
+        # swap targets so that it lines up with the activation shape
+        # (see self.forward)
         targets = np.swapaxes(targets, 0, 1)
 
         return super(HessianRNN, self).error(W, inputs, targets)
@@ -202,7 +205,7 @@ class HessianRNN(HessianFF):
                     deltas[l] = self.J_dot(d_activations[l][s], error)
                 else:
                     deltas[l] = (self.J_dot(d_activations[l][s], error) +
-                        self.layer_types[l].d_state * deltas[l])
+                                 self.layer_types[l].d_state * deltas[l])
 
                 # gradient for recurrent weights
                 if self.rec_layers[l]:
@@ -231,53 +234,48 @@ class HessianRNN(HessianFF):
         eps = 1e-6
         N = self.W.size
         sig_len = inputs.shape[1]
+        output_d = targets.shape[2]
 
-        g = np.zeros(N)
+        Gv = np.zeros(N)
         for b in range(inputs.shape[0]):
-            acts = self.forward(inputs[b], self.W)
+            base = self.forward(inputs[b], self.W)[-1].squeeze(axis=1)
 
-            # check_G only works for 1D output at the moment
-            assert acts[-1].shape[2] == 1
+#             print "base shape", base.shape
 
-            base = acts[-1].squeeze(axis=(1, 2))
-#             base = np.concatenate((acts[-1].squeeze(axis=(1, 2)),
-#                                    acts[1][-1].squeeze(axis=0)))
-
-            J = np.zeros((sig_len, N))
-#             J = np.zeros((sig_len + self.shape[1], N))
+            J = np.zeros((sig_len, N, output_d))
             for i in range(N):
                 inc_i = np.zeros(N)
                 inc_i[i] = eps
 
-                acts = self.forward(inputs[b], self.W + inc_i)
-                J[:, i] = (acts[-1].squeeze(axis=(1, 2)) - base) / eps
-#                 J[:, i] = (np.concatenate((acts[-1].squeeze(axis=(1, 2)),
-#                                            acts[1][-1].squeeze(axis=0))) -
-#                            base) / eps
+                acts = self.forward(inputs[b],
+                                    self.W + inc_i)[-1].squeeze(axis=1)
+                J[:, i] = (acts - base) / eps
 
+            L = np.zeros((sig_len, output_d, output_d))
             if self.error_type == "mse":
-                L = np.ones(sig_len)
+                L[:] = np.eye(output_d)
             elif self.error_type == "ce":
-                L = targets[b].squeeze(axis=1) / base ** 2
+                for i in range(sig_len):
+                    L[i] = np.diag(targets[b][i] / base[i] ** 2)
 
-            L = np.diag(L)
-#             L = np.diag(np.concatenate((L,
-#                                         [self.struc_damping] *
-#                                         self.shape[1])))
+            G = np.zeros((N, N))
+            # sum over the signal
+            for i in range(sig_len):
+                G += np.dot(J[i], np.dot(L[i], J[i].T))
 
-            g += np.dot(np.dot(J.T, np.dot(L, J)), v)
+            Gv += np.dot(G, v)
 
-        g /= inputs.shape[0]
+        Gv /= inputs.shape[0]
 
-        g += damping * v
+        Gv += damping * v
 
         try:
-            assert np.allclose(g, calc_G, rtol=1e-3)
+            assert np.allclose(Gv, calc_G, rtol=1e-3)
         except AssertionError:
-            print g
+            print Gv
             print calc_G
-            print g - calc_G
-            print g / calc_G
+            print Gv - calc_G
+            print Gv / calc_G
             raise
 
     def G(self, v, damping=0, output=None):
@@ -313,10 +311,9 @@ class HessianRNN(HessianFF):
                         R_inputs[l][s] += np.dot(R_activations[pre], Ww)
 
                 # input from previous state
-                if isinstance(self.layer_types[l], Continuous):
-                    # TODO: general case for this (like d_state)?
+                if self.layer_types[l].d_input is not None:
                     R_inputs[l][s] += (R_inputs[l][s - 1] *
-                                       self.layer_types[l].coeff)
+                                       self.layer_types[l].d_input)
 
                 # recurrent input
                 if self.rec_layers[l]:
@@ -380,6 +377,8 @@ class HessianRNN(HessianFF):
                                    R_deltas[l])
 
                 # apply structural damping
+                # TODO: should the effect of state on R_inputs be included in
+                # the structural damping?
                 R_deltas[l] += self.J_dot(self.d_activations[l][s],
                                           damping * self.struc_damping *
                                           R_inputs[l][s])

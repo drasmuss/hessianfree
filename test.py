@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 from hessianff import HessianFF
 from hessianrnn import HessianRNN
 
-from nonlinearities import Logistic, Tanh, Softmax, SoftLIF, ReLU, Continuous
+from nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU, Continuous,
+                            Linear)
 
 
 def test_xor():
@@ -179,7 +180,7 @@ def test_profile():
 def test_GPU():
     import time
 
-    ff = HessianFF(use_GPU=True, debug=False)
+    ff = HessianFF([1, 1], use_GPU=True, debug=False)
     ff.GPU_activations = None
     gpu = ff.outer_sum
     cpu = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
@@ -259,14 +260,15 @@ def test_continuous():
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
                        np.linspace(0, 1, sig_len))[:, :, None]
+    targets = np.tile(targets, (1, 1, 2))
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(shape=[1, 10, 1], struc_damping=0.0,
-                     layer_types=nl,
-                     use_GPU=False, debug=False)
+    rnn = HessianRNN(shape=[1, 10, 2], struc_damping=0.0,
+                     layer_types=nl, error_type="mse",
+                     use_GPU=False, debug=True)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
                     test=test, max_epochs=100, plotting=True)
