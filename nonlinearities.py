@@ -12,6 +12,10 @@ class Nonlinearity(object):
         # nonlinearities that have state)
         self.d_state = None
 
+        # the derivative of state_t+1 with respect to input_t (for
+        # nonlinearities that have state)
+        self.d_input = None
+
     def activation(self, x):
         """Applies the nonlinearity to the inputs."""
 
@@ -25,6 +29,8 @@ class Nonlinearity(object):
         raise NotImplementedError()
 
     def reset(self):
+        """Reset the internal state of the nonlinearity."""
+
         pass
 
 
@@ -58,7 +64,7 @@ class ReLU(Nonlinearity):
 
 class Softmax(Nonlinearity):
     def __init__(self):
-        super(Logistic, self).__init__()
+        super(Softmax, self).__init__()
 
     def activation(self, x):
         e = np.exp(x - np.max(x, axis=-1)[..., None])
@@ -77,8 +83,8 @@ class Softmax(Nonlinearity):
 
 
 class SoftLIF(Nonlinearity):
-    def __init__(self, sigma=1, tau_rc=0.02, tau_ref=0.002, amp=1):
-        super(Logistic, self).__init__(use_activations=False)
+    def __init__(self, sigma=1, tau_rc=0.02, tau_ref=0.002, amp=0.01):
+        super(SoftLIF, self).__init__(use_activations=False)
         self.sigma = sigma
         self.tau_rc = tau_rc
         self.tau_ref = tau_ref
@@ -123,6 +129,7 @@ class Continuous(Nonlinearity):
         self.coeff = dt / tau
 
         self.d_state = 1 - self.coeff
+        self.d_input = self.coeff
 
         self.reset()
 
@@ -136,16 +143,14 @@ class Continuous(Nonlinearity):
     def d_activation(self, x):
         self.d_act_count += 1
 
-        # sanity check that self.inputs is in sync
+        # sanity check that state is in sync
         assert self.act_count == self.d_act_count
 
         act_d = self.base.d_activation(self.base.activation(self.state) if
                                        self.base.use_activations else
-                                       self.inputs)
+                                       self.state)
 
-        state_d = self.coeff
-
-        return act_d * state_d
+        return act_d * self.d_input
 
     def reset(self):
         self.state = 0.0

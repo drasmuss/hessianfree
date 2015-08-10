@@ -11,7 +11,6 @@ import pickle
 from collections import defaultdict, OrderedDict
 from copy import deepcopy
 
-from scipy.special import expit
 import numpy as np
 
 try:
@@ -99,8 +98,8 @@ class HessianFF(object):
                 # load weights from file
                 self.W = np.load(load_weights)
             if self.W.dtype != self.dtype:
-                raise TypeError("Weights from file don't match self.dtype (%s)"
-                                % self.dtype)
+                raise TypeError("Weights from file (%s) don't match "
+                                "self.dtype (%s)" % (self.W.dtype, self.dtype))
         else:
             self.W = self.init_weights([(self.shape[pre] + 1,
                                          self.shape[post])
@@ -115,131 +114,15 @@ class HessianFF(object):
         else:
             self.outer_sum = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
 
-    def init_GPU(self):
-        dev = pycuda.autoinit.device
-        print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
-        self.num_threads = dev.MAX_THREADS_PER_BLOCK
-
-        # this one operation in the gradient/Gv calculations is where
-        # most of the computational work can be this algorithm, so
-        # parallelizing it on the GPU can be pretty helpful.
-        mod = SourceModule("""
-        __global__ void outer_sum(float *a, float *b, float *out,
-                                  int batch_size)
-        {
-            int a_i = blockIdx.x*blockDim.x + threadIdx.x;
-            int b_i = blockIdx.y*blockDim.y + threadIdx.y;
-            const int a_len = blockDim.x * gridDim.x;
-            const int b_len = blockDim.y * gridDim.y;
-            const int out_addr = a_i*b_len + b_i;
-
-            out[out_addr] = 0;
-            for(int j=0; j < batch_size; j++) {
-                out[out_addr] += a[a_i] * b[b_i];
-                a_i += a_len;
-                b_i += b_len;
-            }
-        }
-        """)
-
-        def find_block_len(n_threads, threads_per, vec_len):
-            # need to divide n_threads into blocks of size n*threads_per. we
-            # want n to be as large as possible, so we use all the threads in
-            # a block. but vec_len also needs to be evenly divisible by n (I
-            # don't think it's possible to have different sized blocks in
-            # different grid cells). so we want the highest factor of vec_len
-            # that is <= n_threads/threads_per.
-            start = int(n_threads / threads_per)
-
-            if start >= vec_len:
-                return vec_len
-
-            mid = int(np.sqrt(vec_len))
-            for n in range(start, 0 if start < mid else mid - 1, -1):
-                if vec_len % n == 0:
-                    return n
-
-            return 1
-
-        def outer_sum(in_a, in_b):
-            if isinstance(in_a, (list, tuple)):
-                # load pre-cached GPU activations
-                a = self.GPU_activations
-                for idx in in_a:
-                    a = a[idx]
-            else:
-                a = in_a
-            b = in_b  # b is never cached
-
-            a_len = np.int32(a.shape[1])
-            b_len = np.int32(b.shape[1])
-            batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
-
-            if a_len * b_len < 2 ** 15:
-                # just do it on the CPU
-                if isinstance(in_a, (list, tuple)):
-                    a = self.activations
-                    for idx in in_a:
-                        a = a[idx]
-                return np.ravel(np.einsum("ij,ik", a, b))
-
-            out = np.zeros(a_len * b_len, dtype=np.float32)
-
-            if self.debug:
-                # convert the 64 bit values to 32 bit
-                a = a.astype(np.float32)
-                b = b.astype(np.float32)
-
-            assert a.dtype == b.dtype == np.float32
-
-            cols_per_block = find_block_len(self.num_threads, 1, b_len)
-            rows_per_block = find_block_len(self.num_threads, cols_per_block,
-                                            a_len)
-
-            # load data onto gpu (if it isn't there already)
-            a_gpu = (a if isinstance(a, gpuarray.GPUArray) else drv.In(a))
-            b_gpu = (b if isinstance(b, gpuarray.GPUArray) else drv.In(b))
-            out_gpu = (out if isinstance(out, gpuarray.GPUArray) else
-                       drv.Out(out))
-
-            # execute function
-            gpu_outer = mod.get_function("outer_sum")
-            gpu_outer(a_gpu, b_gpu, out_gpu, batchsize,
-                      grid=(a_len / rows_per_block, b_len / cols_per_block),
-                      block=(rows_per_block, cols_per_block, 1))
-
-            if self.debug:
-                if isinstance(a, gpuarray.GPUArray):
-                    tmp_a = np.zeros(a.shape, dtype=np.float32)
-                    a.get(tmp_a)
-                else:
-                    tmp_a = a
-                if isinstance(b, gpuarray.GPUArray):
-                    tmp_b = np.zeros(b.shape, dtype=np.float32)
-                    b.get(tmp_b)
-                else:
-                    tmp_b = b
-                truth = np.ravel(np.einsum("ij,ik", tmp_a, tmp_b))
-                try:
-                    assert np.allclose(out, truth, atol=1e-4)
-                except AssertionError:
-                    print out
-                    print truth
-                    print out - truth
-                    raise
-
-            return out
-
-        self.outer_sum = outer_sum
-
     def init_weights(self, shapes, coeff=1.0, init_type="sparse"):
         """Weight initialization, given shapes of weight matrices (including
         bias row)."""
 
+        W = [np.zeros(s, dtype=self.dtype) for s in shapes]
+
         if init_type == "sparse":
             # sparse initialization (from martens)
             num_conn = 15
-            W = [np.zeros(s, dtype=self.dtype) for s in shapes]
             for i, s in enumerate(shapes):
                 for j in range(s[1]):
                     # pick num_conn random pre neurons (omitting "bias" neuron)
@@ -249,14 +132,14 @@ class HessianFF(object):
 
                     # connect to post
                     W[i][indices, j] = np.random.randn(indices.size) * coeff
-
         elif init_type == "uniform":
-            W = [np.zeros(s, dtype=self.dtype) for s in shapes]
             for i, s in enumerate(shapes):
                 pre_n = s[0] - 1
                 W[i][:-1] = np.random.uniform(-coeff / np.sqrt(pre_n),
                                               coeff / np.sqrt(pre_n),
                                               (pre_n, s[1]))
+        else:
+            raise ValueError("Unknown weight initialization (%s)" % init_type)
 
         W = np.concatenate([w.flatten() for w in W])
 
@@ -280,7 +163,7 @@ class HessianFF(object):
                 offset += n_params
 
     def get_weights(self, params, conn, separate=True):
-        """Get weight matrix for a layer from the overall parameter vector."""
+        """Get weight matrix for a connection from overall parameter vector."""
 
         offset, W_end, b_end = self.offsets[conn]
         if separate:
@@ -300,13 +183,6 @@ class HessianFF(object):
         if input.ndim < 2:
             # then we've just been given a single sample (rather than batch)
             input = input[None, :]
-
-        for l in self.layer_types:
-            if isinstance(l, nonlinearities.Continuous):
-                print ("Are you sure you mean to use a continuous layer type "
-                       "with a single-step feedforward net?")
-
-            l.reset()
 
         activations = [None for _ in range(self.n_layers)]
         if deriv:
@@ -377,6 +253,12 @@ class HessianFF(object):
     def calc_grad(self, W=None, inputs=None, targets=None):
         """Compute parameter gradient."""
 
+        for l in self.layer_types:
+            if l.d_state is not None or l.d_input is not None:
+                raise TypeError("Cannot use neurons with internal state in "
+                                "a one-step feedforward network; use "
+                                "HessianRNN instead.")
+
         W = self.W if W is None else W
         inputs = self.inputs if inputs is None else inputs
         targets = self.targets if targets is None else targets
@@ -388,9 +270,8 @@ class HessianFF(object):
             d_activations = self.d_activations
         else:
             # compute activations
-            self.activations, self.d_activations = self.forward(inputs, W,
-                                                                deriv=True)
-            self.GPU_activations = None
+            activations, d_activations = self.forward(inputs, W, deriv=True)
+            GPU_activations = None
 
         grad = np.zeros(W.size, dtype=self.dtype)
 
@@ -696,10 +577,11 @@ class HessianFF(object):
             self.activations, self.d_activations = self.forward(self.inputs,
                                                                 self.W,
                                                                 deriv=True)
-            self.GPU_activations = None
             if self.use_GPU:
                 self.GPU_activations = [gpuarray.to_gpu(a)
                                         for a in self.activations]
+            else:
+                self.GPU_activations = None
 
             assert self.activations[-1].dtype == self.dtype
 
@@ -733,7 +615,7 @@ class HessianFF(object):
             if i % print_period == 0:
                 print "using iteration", deltas[j + 1][0]
                 print "err", err
-                print "new_err", new_err
+                print "backtracked err", new_err
 
             # update damping parameter (compare improvement predicted by
             # quadratic model to the actual improvement in the error)
@@ -779,8 +661,7 @@ class HessianFF(object):
             # but doesn't hurt)
             self.activations = None
             self.d_activations = None
-            if self.use_GPU:
-                self.GPU_activations = None
+            self.GPU_activations = None
 
             # compute test error
             if test is not None:
@@ -822,3 +703,120 @@ class HessianFF(object):
             if i > 20 and test_errs[-10] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break
+
+    def init_GPU(self):
+        dev = pycuda.autoinit.device
+        print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
+        self.num_threads = dev.MAX_THREADS_PER_BLOCK
+
+        # this one operation in the gradient/Gv calculations is where
+        # most of the computational work can be this algorithm, so
+        # parallelizing it on the GPU can be pretty helpful.
+        mod = SourceModule("""
+        __global__ void outer_sum(float *a, float *b, float *out,
+                                  int batch_size)
+        {
+            int a_i = blockIdx.x*blockDim.x + threadIdx.x;
+            int b_i = blockIdx.y*blockDim.y + threadIdx.y;
+            const int a_len = blockDim.x * gridDim.x;
+            const int b_len = blockDim.y * gridDim.y;
+            const int out_addr = a_i*b_len + b_i;
+
+            out[out_addr] = 0;
+            for(int j=0; j < batch_size; j++) {
+                out[out_addr] += a[a_i] * b[b_i];
+                a_i += a_len;
+                b_i += b_len;
+            }
+        }
+        """)
+
+        def find_block_len(n_threads, threads_per, vec_len):
+            # need to divide n_threads into blocks of size n*threads_per. we
+            # want n to be as large as possible, so we use all the threads in
+            # a block. but vec_len also needs to be evenly divisible by n (I
+            # don't think it's possible to have different sized blocks in
+            # different grid cells). so we want the highest factor of vec_len
+            # that is <= n_threads/threads_per.
+            start = int(n_threads / threads_per)
+
+            if start >= vec_len:
+                return vec_len
+
+            mid = int(np.sqrt(vec_len))
+            for n in range(start, 0 if start < mid else mid - 1, -1):
+                if vec_len % n == 0:
+                    return n
+
+            return 1
+
+        def outer_sum(in_a, in_b):
+            if isinstance(in_a, (list, tuple)):
+                # load pre-cached GPU activations
+                a = self.GPU_activations
+                for idx in in_a:
+                    a = a[idx]
+            else:
+                a = in_a
+            b = in_b  # b is never cached
+
+            a_len = np.int32(a.shape[1])
+            b_len = np.int32(b.shape[1])
+            batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
+
+            if a_len * b_len < 2 ** 15:
+                # just do it on the CPU
+                if isinstance(in_a, (list, tuple)):
+                    a = self.activations
+                    for idx in in_a:
+                        a = a[idx]
+                return np.ravel(np.einsum("ij,ik", a, b))
+
+            out = np.zeros(a_len * b_len, dtype=np.float32)
+
+            if self.debug:
+                # convert the 64 bit values to 32 bit
+                a = a.astype(np.float32)
+                b = b.astype(np.float32)
+
+            assert a.dtype == b.dtype == np.float32
+
+            cols_per_block = find_block_len(self.num_threads, 1, b_len)
+            rows_per_block = find_block_len(self.num_threads, cols_per_block,
+                                            a_len)
+
+            # load data onto gpu (if it isn't there already)
+            a_gpu = (a if isinstance(a, gpuarray.GPUArray) else drv.In(a))
+            b_gpu = (b if isinstance(b, gpuarray.GPUArray) else drv.In(b))
+            out_gpu = (out if isinstance(out, gpuarray.GPUArray) else
+                       drv.Out(out))
+
+            # execute function
+            gpu_outer = mod.get_function("outer_sum")
+            gpu_outer(a_gpu, b_gpu, out_gpu, batchsize,
+                      grid=(a_len / rows_per_block, b_len / cols_per_block),
+                      block=(rows_per_block, cols_per_block, 1))
+
+            if self.debug:
+                if isinstance(a, gpuarray.GPUArray):
+                    tmp_a = np.zeros(a.shape, dtype=np.float32)
+                    a.get(tmp_a)
+                else:
+                    tmp_a = a
+                if isinstance(b, gpuarray.GPUArray):
+                    tmp_b = np.zeros(b.shape, dtype=np.float32)
+                    b.get(tmp_b)
+                else:
+                    tmp_b = b
+                truth = np.ravel(np.einsum("ij,ik", tmp_a, tmp_b))
+                try:
+                    assert np.allclose(out, truth, atol=1e-4)
+                except AssertionError:
+                    print out
+                    print truth
+                    print out - truth
+                    raise
+
+            return out
+
+        self.outer_sum = outer_sum
