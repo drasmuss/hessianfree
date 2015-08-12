@@ -764,7 +764,7 @@ class HessianFF(object):
             b_len = np.int32(b.shape[1])
             batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
 
-            if a_len * b_len < 2 ** 15:
+            if a_len * b_len < 2 ** 14:
                 # just do it on the CPU
                 if isinstance(in_a, (list, tuple)):
                     a = self.activations

@@ -240,8 +240,6 @@ class HessianRNN(HessianFF):
         for b in range(inputs.shape[0]):
             base = self.forward(inputs[b], self.W)[-1].squeeze(axis=1)
 
-#             print "base shape", base.shape
-
             J = np.zeros((sig_len, N, output_d))
             for i in range(N):
                 inc_i = np.zeros(N)
@@ -311,9 +309,9 @@ class HessianRNN(HessianFF):
                         R_inputs[l][s] += np.dot(R_activations[pre], Ww)
 
                 # input from previous state
-                if self.layer_types[l].d_input is not None:
+                if self.layer_types[l].d_state is not None:
                     R_inputs[l][s] += (R_inputs[l][s - 1] *
-                                       self.layer_types[l].d_input)
+                                       self.layer_types[l].d_state)
 
                 # recurrent input
                 if self.rec_layers[l]:

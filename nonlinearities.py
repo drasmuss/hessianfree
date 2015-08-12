@@ -12,10 +12,6 @@ class Nonlinearity(object):
         # nonlinearities that have state)
         self.d_state = None
 
-        # the derivative of state_t+1 with respect to input_t (for
-        # nonlinearities that have state)
-        self.d_input = None
-
     def activation(self, x):
         """Applies the nonlinearity to the inputs."""
 
@@ -120,16 +116,12 @@ class SoftLIF(Nonlinearity):
 
 
 class Continuous(Nonlinearity):
-    def __init__(self, base, sig_len, tau=1.0, dt=1.0):
+    def __init__(self, base, tau=1.0, dt=1.0):
         super(Continuous, self).__init__(use_activations=False)
         self.base = base
-        self.sig_len = sig_len
-        self.tau = tau
-        self.dt = dt
         self.coeff = dt / tau
 
         self.d_state = 1 - self.coeff
-        self.d_input = self.coeff
 
         self.reset()
 
@@ -150,7 +142,7 @@ class Continuous(Nonlinearity):
                                        self.base.use_activations else
                                        self.state)
 
-        return act_d * self.d_input
+        return act_d * self.coeff
 
     def reset(self):
         self.state = 0.0

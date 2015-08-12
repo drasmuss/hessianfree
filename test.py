@@ -255,7 +255,7 @@ def test_integrator():
 def test_continuous():
     n_inputs = 10
     sig_len = 50
-    nl = Continuous(Logistic(), sig_len, tau=2.0)
+    nl = Continuous(Logistic(), tau=2.0, dt=0.6)
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
