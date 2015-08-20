@@ -294,6 +294,93 @@ def test_continuous():
 
     plt.show()
 
+
+def test_plant():
+    n_inputs = 15
+    sig_len = 30
+    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                      np.ones(sig_len))[:, :, None]
+    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                       np.linspace(0, 1, sig_len))[:, :, None]
+    inputs = inputs.astype(np.float32)
+    targets = targets.astype(np.float32)
+
+    class Plant:
+        def __init__(self, inputs, targets):
+            self.my_inputs = inputs
+            self.my_targets = targets
+
+            # self.shape should be [n_batches, signal_length, input_dim]
+            # TODO: allow flexible signal lengths?
+            self.shape = [n_inputs, sig_len, 2]
+            self.target_d = 1
+
+            self.count = 0
+            self.reset()
+
+        def __call__(self, x):
+            x = x.astype(np.float32)
+            inp = np.concatenate((self.my_inputs[:, self.count], x), axis=1)
+            tar = x + self.my_targets[:, self.count]
+#             inp = np.tile(self.my_inputs[:, self.count], (1, 2))
+#             tar = self.my_targets[:, self.count]
+
+            self.inputs = np.concatenate((self.inputs, inp[:, None, :]),
+                                         axis=1)
+            self.targets = np.concatenate((self.targets, tar[:, None, :]),
+                                          axis=1)
+            self.count += 1
+            return self.inputs[:, -1]
+
+        def get_inputs(self):
+            return self.inputs
+
+        def get_targets(self):
+            return self.targets
+
+        def reset(self):
+            assert self.count == 0 or self.count == self.shape[1]
+            self.count = 0
+            self.inputs = np.zeros((self.shape[0], 0, self.shape[2]),
+                                   dtype=np.float32)
+            self.targets = np.zeros((self.shape[0], 0, self.target_d),
+                                    dtype=np.float32)
+
+
+    plant = Plant(inputs, targets)
+
+    test = (plant, None)
+
+    rnn = HessianRNN(shape=[2, 10, 1], struc_damping=0.0,
+                     layer_types=Logistic(), error_type="mse",
+                     use_GPU=False, debug=False)
+
+    rnn.run_batches(plant, None, CG_iter=100, batch_size=None,
+                    test=test, max_epochs=30, plotting=True)
+
+    # using gradient descent (for comparison)
+#     for i in range(10000):
+#         if i % 10 == 0:
+#             print "iteration", i
+#         rnn.gradient_descent(plant, None, l_rate=0.1)
+
+    outputs = rnn.forward(inputs, rnn.W)[-1]
+
+    plt.figure()
+    plt.plot(plant.get_inputs()[:, :, 0].squeeze().T)
+    plt.plot(plant.get_inputs()[:, :, 1].squeeze().T)
+    plt.title("inputs")
+
+    plt.figure()
+    plt.plot(plant.get_targets().squeeze().T)
+    plt.title("targets")
+
+    plt.figure()
+    plt.plot(outputs.squeeze().T)
+    plt.title("outputs")
+
+    plt.show()
+
 if len(sys.argv) < 2:
     test_xor()
 else:

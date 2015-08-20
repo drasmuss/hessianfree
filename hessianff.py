@@ -23,7 +23,6 @@ except:
 
 import nonlinearities
 
-
 class HessianFF(object):
     def __init__(self, shape, layer_types=nonlinearities.Logistic(),
                  conns=None, error_type="mse", W_init_coeff=1.0,
@@ -180,6 +179,8 @@ class HessianFF(object):
     def forward(self, input, params, deriv=False):
         """Compute feedforward activations for given input and parameters."""
 
+        assert not callable(input)  # TODO: support this?
+
         if input.ndim < 2:
             # then we've just been given a single sample (rather than batch)
             input = input[None, :]
@@ -215,12 +216,14 @@ class HessianFF(object):
     def error(self, W=None, inputs=None, targets=None):
         """Compute network error."""
 
+        assert not callable(inputs)  # TODO: support this?
+
         W = self.W if W is None else W
         inputs = self.inputs if inputs is None else inputs
         targets = self.targets if targets is None else targets
 
-        if (self.activations is not None and
-                W is self.W and inputs is self.inputs):
+        if (W is self.W and inputs is self.inputs and
+                self.activations is not None):
             # use cached activations
             outputs = self.activations[-1]
         else:
@@ -228,7 +231,7 @@ class HessianFF(object):
             outputs = self.forward(inputs, W)[-1]
 
         if self.error_type == "mse":
-            error = np.sum((outputs - np.nan_to_num(targets)) ** 2)
+            error = np.sum(np.nan_to_num(outputs - targets) ** 2)
             error /= 2 * len(inputs)
         elif self.error_type == "ce":
             error = -np.sum(np.nan_to_num(targets) * np.log(outputs))
@@ -253,8 +256,10 @@ class HessianFF(object):
     def calc_grad(self):
         """Compute parameter gradient."""
 
+        assert not callable(inputs)  # TODO: support this?
+
         for l in self.layer_types:
-            if l.d_state is not None or l.d_input is not None:
+            if l.d_state is not None:
                 raise TypeError("Cannot use neurons with internal state in "
                                 "a one-step feedforward network; use "
                                 "HessianRNN instead.")
@@ -291,11 +296,10 @@ class HessianFF(object):
 
         return grad
 
-    def check_grad(self, calc_grad, inputs, targets):
+    def check_grad(self, calc_grad):
         """Check gradient via finite differences (for debugging)."""
 
-        eps = 1e-4
-
+        eps = 1e-6
         grad = np.zeros(calc_grad.shape)
         for i, val in enumerate(self.W):
             inc_W = np.copy(self.W)
@@ -303,10 +307,9 @@ class HessianFF(object):
             inc_W[i] = val + eps
             dec_W[i] = val - eps
 
-            error_inc = self.error(inc_W, inputs, targets)
-            error_dec = self.error(dec_W, inputs, targets)
+            error_inc = self.error(inc_W, self.inputs, self.targets)
+            error_dec = self.error(dec_W, self.inputs, self.targets)
             grad[i] = (error_inc - error_dec) / (2 * eps)
-
         try:
             assert np.allclose(grad, calc_grad, rtol=1e-3)
         except AssertionError:
@@ -319,20 +322,23 @@ class HessianFF(object):
     def gradient_descent(self, inputs, targets, l_rate=1):
         """Basic first-order gradient descent (for comparison)."""
 
-        self.inputs = inputs
-        self.targets = targets
-
-        # calculate activations
-        self.activations, self.d_activations = self.forward(self.inputs,
+        self.activations, self.d_activations = self.forward(inputs,
                                                             self.W,
                                                             deriv=True)
         self.GPU_activations = None
+
+        if callable(inputs):
+            self.inputs = inputs.get_inputs()
+            self.targets = inputs.get_targets()
+        else:
+            self.inputs = inputs
+            self.targets = targets
 
         # compute gradient
         grad = self.calc_grad()
 
         if self.debug:
-            self.check_grad(grad, inputs, targets)
+            self.check_grad(grad)
 
         # update weights
         self.W -= l_rate * grad
@@ -524,6 +530,8 @@ class HessianFF(object):
         self.damping = init_damping
         test_errs = []
 
+        plant = inputs if callable(inputs) else None
+
         if plotting:
             # data is dumped out to file so that the plots can be
             # displayed/updated in parallel (see dataplotter.py)
@@ -547,15 +555,26 @@ class HessianFF(object):
                 print "=" * 40
                 print "batch", i
 
-            # generate mini-batch
-            if batch_size is None:
-                self.inputs = inputs
-                self.targets = targets
+            # generate inputs/targets for this batch
+            if plant is None:
+                if batch_size is None:
+                    # use everything
+                    self.inputs = inputs
+                    self.targets = targets
+                else:
+                    # generate mini-batch
+                    indices = np.random.choice(np.arange(len(inputs)),
+                                               size=batch_size, replace=False)
+                    self.inputs = inputs[indices]
+                    self.targets = targets[indices]
             else:
-                indices = np.random.choice(np.arange(len(inputs)),
-                                           size=batch_size, replace=False)
-                self.inputs = inputs[indices]
-                self.targets = targets[indices]
+                # run plant to generate batch
+                if batch_size is not None:
+                    plant.shape[0] = batch_size
+                self.forward(plant, self.W)
+                self.inputs = plant.get_inputs()
+                self.targets = plant.get_targets()
+
             if not(self.inputs.dtype == self.targets.dtype == np.float32):
                 raise TypeError("Input type must be np.float32")
 
@@ -584,13 +603,13 @@ class HessianFF(object):
             if i % print_period == 0:
                 print "CG steps", deltas[-1][0]
 
-            err = self.error()  # note: don't reuse previous error, diff batch
+            err = self.error()  # note: don't reuse previous error
             init_delta = deltas[-1][1]  # note: don't backtrack this
 
             # CG backtracking
             new_err = np.inf
             for j in range(len(deltas) - 1, -1, -1):
-                prev_err = self.error(self.W + deltas[j][1])
+                prev_err = self.error(self.W + deltas[j][1], inputs=plant)
                 if prev_err > new_err:
                     break
                 delta = deltas[j][1]
@@ -628,7 +647,7 @@ class HessianFF(object):
                     break
 
                 l_rate *= 0.8
-                new_err = self.error(self.W + l_rate * delta)
+                new_err = self.error(self.W + l_rate * delta, inputs=plant)
             else:
                 # no good update, so skip this iteration
                 l_rate = 0.0

@@ -52,7 +52,7 @@ class HessianRNN(HessianFF):
 
     def get_weights(self, params, layer, separate=True, recurrent=False):
         """Get weight matrix for a layer from the overall parameter vector."""
-
+        # TODO: get rid of recurrent parameter, just check if layer is a tuple
         if not recurrent:
             return super(HessianRNN, self).get_weights(params, layer, separate)
         else:
@@ -76,7 +76,9 @@ class HessianRNN(HessianFF):
         # input shape = [batch_size, seq_len, input_dim]
         # activations shape = [n_layers, batch_size, seq_len, layer_size]
 
-        if input.ndim < 3:
+        if callable(input):
+            input.reset()
+        elif input.ndim < 3:
             # then we've just been given a single sample (rather than batch)
             input = input[None, :, :]
 
@@ -97,7 +99,10 @@ class HessianRNN(HessianFF):
             for i in range(self.n_layers):
                 # feedforward input
                 if i == 0:
-                    ff_input = input[:, s]
+                    if callable(input):
+                        ff_input = input(activations[-1][s - 1])
+                    else:
+                        ff_input = input[:, s]
                 else:
                     ff_input = np.zeros_like(activations[i][:, s])
                     for pre in self.back_conns[i]:
