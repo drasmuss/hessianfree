@@ -250,7 +250,7 @@ class HessianFF(object):
         else:
             return np.einsum("ijk,ik->ij", J, vec)
 
-    def calc_grad(self, W=None, inputs=None, targets=None):
+    def calc_grad(self):
         """Compute parameter gradient."""
 
         for l in self.layer_types:
@@ -259,49 +259,35 @@ class HessianFF(object):
                                 "a one-step feedforward network; use "
                                 "HessianRNN instead.")
 
-        W = self.W if W is None else W
-        inputs = self.inputs if inputs is None else inputs
-        targets = self.targets if targets is None else targets
-
-        if W is self.W and inputs is self.inputs:
-            # use cached activations
-            activations = self.activations
-            GPU_activations = self.GPU_activations
-            d_activations = self.d_activations
-        else:
-            # compute activations
-            activations, d_activations = self.forward(inputs, W, deriv=True)
-            GPU_activations = None
-
-        grad = np.zeros(W.size, dtype=self.dtype)
+        grad = np.zeros_like(self.W)
 
         # backpropagate error
         deltas = [None for _ in range(self.n_layers)]
 
         if self.error_type == "mse":
             # translate any nans in target to zero error
-            error = activations[-1] - np.nan_to_num(targets)
+            error = np.nan_to_num(self.activations[-1] - self.targets)
         elif self.error_type == "ce":
-            error = -np.nan_to_num(targets) / activations[-1]
+            error = -np.nan_to_num(self.targets) / self.activations[-1]
 
-        deltas[-1] = self.J_dot(d_activations[-1], error)
+        deltas[-1] = self.J_dot(self.d_activations[-1], error)
 
         for i in range(self.n_layers - 2, -1, -1):
-            error = np.zeros(activations[i].shape, dtype=self.dtype)
+            error = np.zeros_like(self.activations[i])
             for post in self.conns[i]:
                 c_error = np.dot(deltas[post],
-                                 self.get_weights(W, (i, post))[0].T)
+                                 self.get_weights(self.W, (i, post))[0].T)
                 error += c_error
 
                 offset, W_end, b_end = self.offsets[(i, post)]
                 grad[offset:W_end] = self.outer_sum(
-                    activations[i] if GPU_activations is None else [i],
-                    deltas[post])
+                    self.activations[i] if self.GPU_activations is None
+                    else [i], deltas[post])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
-            deltas[i] = self.J_dot(d_activations[i], error)
+            deltas[i] = self.J_dot(self.d_activations[i], error)
 
-        grad /= inputs.shape[0]
+        grad /= self.inputs.shape[0]
 
         return grad
 
