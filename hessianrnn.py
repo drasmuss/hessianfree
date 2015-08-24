@@ -174,7 +174,7 @@ class HessianRNN(HessianFF):
                         grad[offset:W_end] += (
                             self.outer_sum(self.activations[l][:, s]
                                            if self.GPU_activations is None
-                                           else [l, s],
+                                           else [l, np.index_exp[:, s]],
                                            deltas[post]))
                         grad[W_end:b_end] += np.sum(deltas[post], axis=0)
 
@@ -197,7 +197,7 @@ class HessianRNN(HessianFF):
                         grad[offset:W_end] += (
                             self.outer_sum(self.activations[l][:, s - 1]
                                            if self.GPU_activations is None
-                                           else [l, s - 1],
+                                           else [l, np.index_exp[:, s - 1]],
                                            deltas[l]))
                     else:
                         # put remaining gradient into initial bias
@@ -339,7 +339,7 @@ class HessianRNN(HessianFF):
                         Gv[offset:W_end] += (
                             self.outer_sum(self.activations[l][:, s]
                                            if self.GPU_activations is None
-                                           else [l, s],
+                                           else [l, np.index_exp[:, s]],
                                            R_deltas[post]))
                         Gv[W_end:b_end] += np.sum(R_deltas[post], axis=0)
 
@@ -371,7 +371,7 @@ class HessianRNN(HessianFF):
                         Gv[offset:W_end] += (
                             self.outer_sum(self.activations[l][:, s - 1]
                                            if self.GPU_activations is None
-                                           else [l, s - 1],
+                                           else [l, np.index_exp[:, s - 1]],
                                            R_deltas[l]))
                     else:
                         Gv[W_end:b_end] = np.sum(R_deltas[l], axis=0)

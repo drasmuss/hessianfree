@@ -23,6 +23,7 @@ except:
 
 import nonlinearities
 
+
 class HessianFF(object):
     def __init__(self, shape, layer_types=nonlinearities.Logistic(),
                  conns=None, error_type="mse", W_init_coeff=1.0,
@@ -590,10 +591,13 @@ class HessianFF(object):
 
             assert self.activations[-1].dtype == self.dtype
 
+            err = self.error()  # note: don't reuse previous error (diff batch)
+
             # compute gradient
             grad = self.calc_grad()
 
             if i % print_period == 0:
+                print "initial err", err
                 print "grad norm", np.linalg.norm(grad)
 
             # run CG
@@ -603,7 +607,6 @@ class HessianFF(object):
             if i % print_period == 0:
                 print "CG steps", deltas[-1][0]
 
-            err = self.error()  # note: don't reuse previous error
             init_delta = deltas[-1][1]  # note: don't backtrack this
 
             # CG backtracking
@@ -619,7 +622,6 @@ class HessianFF(object):
 
             if i % print_period == 0:
                 print "using iteration", deltas[j + 1][0]
-                print "err", err
                 print "backtracked err", new_err
 
             # update damping parameter (compare improvement predicted by
@@ -656,7 +658,7 @@ class HessianFF(object):
             if i % print_period == 0:
                 print "min_improv", min_improv
                 print "l_rate", l_rate
-                print "l_rate_err", new_err
+                print "l_rate err", new_err
                 print "improvement", new_err - err
 
             # update weights
