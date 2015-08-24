@@ -5,11 +5,11 @@ import ast
 import numpy as np
 import matplotlib.pyplot as plt
 
-from hessianff import HessianFF
-from hessianrnn import HessianRNN
+from hessianfree.hessianff import HessianFF
+from hessianfree.hessianrnn import HessianRNN
 
-from nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU, Continuous,
-                            Linear)
+from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
+                                        Continuous, Linear)
 
 
 def test_xor():
@@ -246,7 +246,7 @@ def test_integrator():
 
     outputs = rnn.forward(inputs, rnn.W)[-1]
     plt.figure()
-    plt.plot(outputs.squeeze())
+    plt.plot(outputs.squeeze().T)
     plt.title("outputs")
 
     plt.show()
@@ -289,7 +289,7 @@ def test_continuous():
 
     outputs = rnn.forward(inputs, rnn.W)[-1]
     plt.figure()
-    plt.plot(outputs.squeeze())
+    plt.plot(outputs.squeeze().T)
     plt.title("outputs")
 
     plt.show()
