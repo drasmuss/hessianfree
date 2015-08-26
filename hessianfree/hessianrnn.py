@@ -100,7 +100,7 @@ class HessianRNN(HessianFF):
                 # feedforward input
                 if i == 0:
                     if callable(input):
-                        ff_input = input(activations[-1][s - 1])
+                        ff_input = input(activations[-1][:, s - 1])
                     else:
                         ff_input = input[:, s]
                 else:
@@ -137,6 +137,15 @@ class HessianRNN(HessianFF):
 
     def error(self, W=None, inputs=None, targets=None):
         """Compute network error."""
+
+        if callable(inputs):
+            assert targets is None
+
+            # run plant to get inputs/targets
+            W = self.W if W is None else W
+            self.forward(inputs, W)
+            targets = inputs.get_targets()
+            inputs = inputs.get_inputs()
 
         return super(HessianRNN, self).error(W, inputs, targets)
 
@@ -188,7 +197,7 @@ class HessianRNN(HessianFF):
                 else:
                     deltas[l] = (
                         self.J_dot(self.d_activations[l][:, s], error) +
-                        np.dot(self.layer_types[l].d_state, deltas[l]))
+                        np.dot(deltas[l], self.layer_types[l].d_state))
 
                 # gradient for recurrent weights
                 if self.rec_layers[l]:
@@ -293,8 +302,8 @@ class HessianRNN(HessianFF):
 
                 # input from previous state
                 if self.layer_types[l].d_state is not None:
-                    R_inputs[l][:, s] += (R_inputs[l][:, s - 1] *
-                                          self.layer_types[l].d_state)
+                    R_inputs[l][:, s] += np.dot(R_inputs[l][:, s - 1],
+                                                self.layer_types[l].d_state)
 
                 # recurrent input
                 if self.rec_layers[l]:
@@ -353,9 +362,9 @@ class HessianRNN(HessianFF):
                                              R_error)
                 else:
                     R_deltas[l] = (self.J_dot(self.d_activations[l][:, s],
-                                               R_error) +
-                                   self.layer_types[l].d_state *
-                                   R_deltas[l])
+                                              R_error) +
+                                   np.dot(R_deltas[l],
+                                          self.layer_types[l].d_state))
 
                 # apply structural damping
                 # TODO: should the effect of state on R_inputs be included in

@@ -13,12 +13,12 @@ class Nonlinearity(object):
         self.d_state = None
 
     def activation(self, x):
-        """Applies the nonlinearity to the inputs."""
+        """Apply the nonlinearity to the inputs."""
 
         raise NotImplementedError()
 
     def d_activation(self, x):
-        """The derivative of the nonlinearity with respect to the inputs."""
+        """Derivative of the nonlinearity with respect to the inputs."""
 
         # note: if self.use_activations is True, then the input here will
         # be self.activations(input), rather than the direct inputs
@@ -121,7 +121,7 @@ class Continuous(Nonlinearity):
         self.base = base
         self.coeff = dt / tau
 
-        self.d_state = 1 - self.coeff
+        self.d_state = np.diag(1 - self.coeff)
 
         self.reset()
 

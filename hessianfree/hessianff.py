@@ -257,8 +257,6 @@ class HessianFF(object):
     def calc_grad(self):
         """Compute parameter gradient."""
 
-        assert not callable(inputs)  # TODO: support this?
-
         for l in self.layer_types:
             if l.d_state is not None:
                 raise TypeError("Cannot use neurons with internal state in "
@@ -626,10 +624,11 @@ class HessianFF(object):
 
             # update damping parameter (compare improvement predicted by
             # quadratic model to the actual improvement in the error)
-            denom = (0.5 * np.dot(delta, self.G(delta, damping=0)) +
+            # TODO: use damping when calculating denom or not?
+            denom = (0.5 * np.dot(delta, self.G(delta, damping=self.damping)) +
                      np.dot(grad, delta))
 
-            improvement_ratio = (new_err - err) / denom if denom > 0 else 1
+            improvement_ratio = (new_err - err) / denom if denom != 0 else 1
             if improvement_ratio < 0.25:
                 self.damping *= 1.5
             elif improvement_ratio > 0.75:

@@ -255,7 +255,7 @@ def test_integrator():
 def test_continuous():
     n_inputs = 10
     sig_len = 50
-    nl = Continuous(Logistic(), tau=2.0, dt=0.6)
+    nl = Continuous(Logistic(), tau=np.random.uniform(1, 10, size=10), dt=0.6)
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -267,7 +267,7 @@ def test_continuous():
     test = (inputs, targets)
 
     rnn = HessianRNN(shape=[1, 10, 2], struc_damping=0.0,
-                     layer_types=nl, error_type="mse",
+                     layer_types=[Linear(), nl, Logistic()], error_type="mse",
                      use_GPU=False, debug=True)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
