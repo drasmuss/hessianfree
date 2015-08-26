@@ -13,6 +13,8 @@ from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
 
 
 def test_xor():
+    """Run a basic xor training test."""
+
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
@@ -35,6 +37,8 @@ def test_xor():
 
 
 def test_mnist(model_args=None, run_args=None):
+    """Test on the MNIST (digit classification) dataset."""
+
     # download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
@@ -56,12 +60,17 @@ def test_mnist(model_args=None, run_args=None):
     tmp += 0.01
     test = (test[0], tmp)
 
+    def test_err(outputs, targets):
+        return np.mean(np.argmax(outputs, axis=-1) !=
+                       np.argmax(targets, axis=-1))
+
     if run_args is None:
         ff.run_batches(inputs, targets, CG_iter=250, batch_size=7500,
                        test=test, max_epochs=1000, init_damping=45,
-                       plotting=True, classification=True)
+                       plotting=True, test_err=test_err)
     else:
-        ff.run_batches(inputs, targets, test=test, **run_args)
+        ff.run_batches(inputs, targets, test=test, test_err=test_err,
+                       **run_args)
 
     output = ff.forward(test[0], ff.W)[-1]
     class_err = np.mean(np.argmax(output, axis=1) !=
@@ -70,6 +79,10 @@ def test_mnist(model_args=None, run_args=None):
 
 
 def test_cifar():
+    """Test on the CIFAR (image classification) data set.
+
+    Note: this is a WIP."""
+
     # download dataset at http://www.cs.toronto.edu/~kriz/cifar.html
     train = [None, None]
     for i in range(1, 6):
@@ -142,6 +155,8 @@ def test_cifar():
 
 
 def test_softlif():
+    """Example of a network using SoftLIF neurons."""
+
     lifs = SoftLIF(sigma=1, tau_ref=0.002, tau_rc=0.02, amp=0.01)
 
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
@@ -167,6 +182,8 @@ def test_softlif():
 
 
 def test_profile():
+    """Run a profiler on the code (uses MNIST example)."""
+
     np.random.seed(0)
     import cProfile
     import pstats
@@ -178,6 +195,9 @@ def test_profile():
 
 
 def test_GPU():
+    """Profile CPU vs GPU performance (can be used to adjust the
+    threshold in hessianff.init_GPU)."""
+
     import time
 
     ff = HessianFF([1, 1], use_GPU=True, debug=False)
@@ -211,6 +231,8 @@ def test_GPU():
 
 
 def test_integrator():
+    """Test for a recurrent network, implementing an integrator."""
+
     n_inputs = 15
     sig_len = 50
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -253,6 +275,8 @@ def test_integrator():
 
 
 def test_continuous():
+    """Example of a network using the Continuous nonlinearity."""
+
     n_inputs = 10
     sig_len = 50
     nl = Continuous(Logistic(), tau=np.random.uniform(1, 10, size=10), dt=0.6)
@@ -296,6 +320,8 @@ def test_continuous():
 
 
 def test_plant():
+    """Example of a network using a dynamic plant to generate inputs."""
+
     n_inputs = 15
     sig_len = 30
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -345,7 +371,6 @@ def test_plant():
                                    dtype=np.float32)
             self.targets = np.zeros((self.shape[0], 0, self.target_d),
                                     dtype=np.float32)
-
 
     plant = Plant(inputs, targets)
 

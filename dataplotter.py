@@ -1,3 +1,5 @@
+"""Run this script to display the data output during a run."""
+
 import pickle
 
 import matplotlib.pyplot as plt

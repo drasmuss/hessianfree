@@ -28,6 +28,22 @@ class HessianFF(object):
     def __init__(self, shape, layer_types=nonlinearities.Logistic(),
                  conns=None, error_type="mse", W_init_coeff=1.0,
                  use_GPU=False, load_weights=None, debug=False):
+        """Initialize the parameters of the network.
+
+        :param shape: list specifying the number of neurons in each layer
+        :param layer_types: nonlinearity (or list of nonlinearities) to use
+            in each layer
+        :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
+            specifying the connections between layers (default is to connect in
+            series)
+        :param error_type: type of loss function (mse or ce)
+        :param W_init_coeff: scales the magnitude of the initial weights
+        :param use_GPU: run certain operations on GPU to speed them up
+            (requires PyCUDA to be installed)
+        :param load_weights: load initial weights from given array or filename
+        :param debug: activates (expensive) features to help with debugging
+        """
+
         self.use_GPU = use_GPU
         self.debug = debug
         self.shape = shape
@@ -51,10 +67,11 @@ class HessianFF(object):
         self.deriv = []
         for t in layer_types:
             if isinstance(t, str):
+                # look up the nonlinearity with the given name
                 t = getattr(nonlinearities, t)()
-            if not (hasattr(t, "activation") and hasattr(t, "d_activation")):
-                raise TypeError("Neuron type (%s) must provide an activation "
-                                "and derivative function" % t)
+            if not isinstance(t, nonlinearities.Nonlinearity):
+                raise TypeError("Layer type (%s) must be an instance of "
+                                "nonlinearities.Nonlinearity" % t)
             self.act += [t.activation]
             self.deriv += [t.d_activation]
             self.layer_types += [t]
@@ -74,22 +91,26 @@ class HessianFF(object):
 
         # add connections
         if conns is None:
-            # normal feedforward connections
+            # set up the feedforward series connections
             conns = {}
             for pre, post in zip(np.arange(self.n_layers - 1),
                                  np.arange(1, self.n_layers)):
                 conns[pre] = [post]
 
         self.conns = OrderedDict(conns)
-        back_conns = defaultdict(list)
+        # note: conns is an ordered dict to ensure compute_offsets
+        # lines up with the order of init_weights (both loop over conns)
+
+        # maintain a list of backwards connections as well (for efficient
+        # lookup in the other direction)
+        self.back_conns = defaultdict(list)
         for pre in conns:
-            # can only make downstream connections
             for post in conns[pre]:
+                self.back_conns[post] += [pre]
+
                 if pre >= post:
-                    raise ValueError("Invalid connection (%s >= %s)"
-                                     % (pre, post))
-                back_conns[post] += [pre]
-        self.back_conns = OrderedDict(back_conns)
+                    raise ValueError("Can only connect from lower to higher "
+                                     " layers (%s >= %s)" % (pre, post))
 
         if load_weights is not None:
             if isinstance(load_weights, np.ndarray):
@@ -98,7 +119,7 @@ class HessianFF(object):
                 # load weights from file
                 self.W = np.load(load_weights)
             if self.W.dtype != self.dtype:
-                raise TypeError("Weights from file (%s) don't match "
+                raise TypeError("Loaded weights (%s) don't match "
                                 "self.dtype (%s)" % (self.W.dtype, self.dtype))
         else:
             self.W = self.init_weights([(self.shape[pre] + 1,
@@ -114,410 +135,28 @@ class HessianFF(object):
         else:
             self.outer_sum = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
 
-    def init_weights(self, shapes, coeff=1.0, init_type="sparse"):
-        """Weight initialization, given shapes of weight matrices (including
-        bias row)."""
-
-        W = [np.zeros(s, dtype=self.dtype) for s in shapes]
-
-        if init_type == "sparse":
-            # sparse initialization (from martens)
-            num_conn = 15
-            for i, s in enumerate(shapes):
-                for j in range(s[1]):
-                    # pick num_conn random pre neurons (omitting "bias" neuron)
-                    indices = np.random.choice(np.arange(s[0] - 1),
-                                               size=min(num_conn, s[0] - 1),
-                                               replace=False)
-
-                    # connect to post
-                    W[i][indices, j] = np.random.randn(indices.size) * coeff
-        elif init_type == "uniform":
-            for i, s in enumerate(shapes):
-                pre_n = s[0] - 1
-                W[i][:-1] = np.random.uniform(-coeff / np.sqrt(pre_n),
-                                              coeff / np.sqrt(pre_n),
-                                              (pre_n, s[1]))
-        else:
-            raise ValueError("Unknown weight initialization (%s)" % init_type)
-
-        W = np.concatenate([w.flatten() for w in W])
-
-        return W
-
-    def compute_offsets(self):
-        """Precompute offsets for layers in the overall parameter vector."""
-
-        n_params = [(self.shape[pre] + 1) * self.shape[post]
-                    for pre in self.conns
-                    for post in self.conns[pre]]
-        self.offsets = {}
-        offset = 0
-        for pre in self.conns:
-            for post in self.conns[pre]:
-                n_params = (self.shape[pre] + 1) * self.shape[post]
-                self.offsets[(pre, post)] = (
-                    offset,
-                    offset + n_params - self.shape[post],
-                    offset + n_params)
-                offset += n_params
-
-    def get_weights(self, params, conn, separate=True):
-        """Get weight matrix for a connection from overall parameter vector."""
-
-        offset, W_end, b_end = self.offsets[conn]
-        if separate:
-            W = params[offset:W_end]
-            b = params[W_end:b_end]
-
-            return (W.reshape((self.shape[conn[0]],
-                               self.shape[conn[1]])),
-                    b)
-        else:
-            return params[offset:b_end].reshape((self.shape[conn[0]] + 1,
-                                                 self.shape[conn[1]]))
-
-    def forward(self, input, params, deriv=False):
-        """Compute feedforward activations for given input and parameters."""
-
-        assert not callable(input)  # TODO: support this?
-
-        if input.ndim < 2:
-            # then we've just been given a single sample (rather than batch)
-            input = input[None, :]
-
-        activations = [None for _ in range(self.n_layers)]
-        if deriv:
-            d_activations = [None for _ in range(self.n_layers)]
-
-        for i in range(self.n_layers):
-            if i == 0:
-                inputs = input
-            else:
-                inputs = np.zeros((input.shape[0], self.shape[i]),
-                                  dtype=self.dtype)
-                for pre in self.back_conns[i]:
-                    W, b = self.get_weights(params, (pre, i))
-                    inputs += np.dot(activations[pre], W) + b
-                    # note: we're applying a bias on each connection (rather
-                    # than one for each neuron). just because it's easier than
-                    # tracking how many connections there are for each layer.
-            activations[i] = self.act[i](inputs)
-
-            if deriv:
-                d_activations[i] = self.deriv[i](
-                    activations[i] if self.layer_types[i].use_activations
-                    else inputs)
-
-        if deriv:
-            return activations, d_activations
-
-        return activations
-
-    def error(self, W=None, inputs=None, targets=None):
-        """Compute network error."""
-
-        assert not callable(inputs)  # TODO: support this?
-
-        W = self.W if W is None else W
-        inputs = self.inputs if inputs is None else inputs
-        targets = self.targets if targets is None else targets
-
-        if (W is self.W and inputs is self.inputs and
-                self.activations is not None):
-            # use cached activations
-            outputs = self.activations[-1]
-        else:
-            # compute activations
-            outputs = self.forward(inputs, W)[-1]
-
-        if self.error_type == "mse":
-            error = np.sum(np.nan_to_num(outputs - targets) ** 2)
-            error /= 2 * len(inputs)
-        elif self.error_type == "ce":
-            error = -np.sum(np.nan_to_num(targets) * np.log(outputs))
-            error /= len(inputs)
-
-        return error
-
-    def J_dot(self, J, vec):
-        """Compute the product of a Jacobian and some vector."""
-
-        # In many cases the Jacobian is a diagonal matrix, so it is more
-        # efficient to just represent it with the diagonal vector.  This
-        # function just lets those two be used interchangeably.
-
-        if J.ndim == 2:
-            # note: the first dimension is the batch, so ndim==2 means
-            # this is a diagonal representation
-            return J * vec
-        else:
-            return np.einsum("ijk,ik->ij", J, vec)
-
-    def calc_grad(self):
-        """Compute parameter gradient."""
-
-        for l in self.layer_types:
-            if l.d_state is not None:
-                raise TypeError("Cannot use neurons with internal state in "
-                                "a one-step feedforward network; use "
-                                "HessianRNN instead.")
-
-        grad = np.zeros_like(self.W)
-
-        # backpropagate error
-        deltas = [None for _ in range(self.n_layers)]
-
-        if self.error_type == "mse":
-            # translate any nans in target to zero error
-            error = np.nan_to_num(self.activations[-1] - self.targets)
-        elif self.error_type == "ce":
-            error = -np.nan_to_num(self.targets) / self.activations[-1]
-
-        deltas[-1] = self.J_dot(self.d_activations[-1], error)
-
-        for i in range(self.n_layers - 2, -1, -1):
-            error = np.zeros_like(self.activations[i])
-            for post in self.conns[i]:
-                c_error = np.dot(deltas[post],
-                                 self.get_weights(self.W, (i, post))[0].T)
-                error += c_error
-
-                offset, W_end, b_end = self.offsets[(i, post)]
-                grad[offset:W_end] = self.outer_sum(
-                    self.activations[i] if self.GPU_activations is None
-                    else [i], deltas[post])
-                np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
-
-            deltas[i] = self.J_dot(self.d_activations[i], error)
-
-        grad /= self.inputs.shape[0]
-
-        return grad
-
-    def check_grad(self, calc_grad):
-        """Check gradient via finite differences (for debugging)."""
-
-        eps = 1e-6
-        grad = np.zeros(calc_grad.shape)
-        for i, val in enumerate(self.W):
-            inc_W = np.copy(self.W)
-            dec_W = np.copy(self.W)
-            inc_W[i] = val + eps
-            dec_W[i] = val - eps
-
-            error_inc = self.error(inc_W, self.inputs, self.targets)
-            error_dec = self.error(dec_W, self.inputs, self.targets)
-            grad[i] = (error_inc - error_dec) / (2 * eps)
-        try:
-            assert np.allclose(grad, calc_grad, rtol=1e-3)
-        except AssertionError:
-            print calc_grad
-            print grad
-            print calc_grad - grad
-            print calc_grad / grad
-            raise
-
-    def gradient_descent(self, inputs, targets, l_rate=1):
-        """Basic first-order gradient descent (for comparison)."""
-
-        self.activations, self.d_activations = self.forward(inputs,
-                                                            self.W,
-                                                            deriv=True)
-        self.GPU_activations = None
-
-        if callable(inputs):
-            self.inputs = inputs.get_inputs()
-            self.targets = inputs.get_targets()
-        else:
-            self.inputs = inputs
-            self.targets = targets
-
-        # compute gradient
-        grad = self.calc_grad()
-
-        if self.debug:
-            self.check_grad(grad)
-
-        # update weights
-        self.W -= l_rate * grad
-
-    def check_G(self, calc_G, inputs, targets, v, damping=0):
-        """Check Gv calculation via finite differences (for debugging)."""
-
-        eps = 1e-6
-        N = self.W.size
-
-        g = np.zeros(N)
-        for n, input in enumerate(inputs):
-            base = self.forward(input, self.W)[-1]
-
-            J = np.zeros((base.size, N))
-            for i in range(N):
-                inc_i = np.zeros(N)
-                inc_i[i] = eps
-
-                J[:, i] = (self.forward(input, self.W + inc_i)[-1] -
-                           base) / eps
-
-            if self.error_type == "mse":
-                L = np.eye(base.size)
-            elif self.error_type == "ce":
-                L = np.diag((targets[n] / base ** 2).squeeze())
-
-            g += np.dot(np.dot(J.T, np.dot(L, J)), v)
-
-        g /= inputs.shape[0]
-
-        g += damping * v
-
-        try:
-            assert np.allclose(g, calc_G, rtol=1e-3)
-        except AssertionError:
-            print g
-            print calc_G
-            print calc_G - g
-            print calc_G / g
-            raise
-
-    def G(self, v, damping=0, output=None):
-        """Compute Gauss-Newton matrix-vector product."""
-
-        if output is None:
-            Gv = np.zeros(self.W.size, dtype=self.dtype)
-        else:
-            Gv = output
-
-        # R forward pass
-        R_activations = [None for _ in range(self.n_layers)]
-        R_activations[0] = np.zeros_like(self.activations[0])
-        for i in range(1, self.n_layers):
-            R_input = np.zeros_like(self.activations[i])
-            for pre in self.back_conns[i]:
-                vw, vb = self.get_weights(v, (pre, i))
-                Ww, _ = self.get_weights(self.W, (pre, i))
-                R_input += np.dot(self.activations[pre], vw) + vb
-                R_input += np.dot(R_activations[pre], Ww)
-
-            R_activations[i] = self.J_dot(self.d_activations[i], R_input)
-
-        # backward pass
-        R_deltas = [None for _ in range(self.n_layers)]
-
-        if self.error_type == "mse":
-            # second derivative of error function is 1
-            R_error = R_activations[-1]
-        elif self.error_type == "ce":
-            R_error = (R_activations[-1] *
-                       np.nan_to_num(self.targets) / self.activations[-1] ** 2)
-
-        R_deltas[-1] = self.J_dot(self.d_activations[-1], R_error)
-
-        for i in range(self.n_layers - 2, -1, -1):
-            R_error = np.zeros_like(self.activations[i])
-            for post in self.conns[i]:
-                W, _ = self.get_weights(self.W, (i, post))
-                R_error += np.dot(R_deltas[post], W.T)
-
-                offset, W_end, b_end = self.offsets[(i, post)]
-                Gv[offset:W_end] = self.outer_sum(
-                    self.activations[i] if self.GPU_activations is None
-                    else [i], R_deltas[post])
-                np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
-
-            R_deltas[i] = self.J_dot(self.d_activations[i], R_error)
-
-        Gv /= len(self.inputs)
-
-        Gv += damping * v  # Tikhonov damping
-
-        return Gv
-
-    def conjugate_gradient(self, init_delta, grad, iters=250):
-        """Compute weight update using conjugate gradient algorithm."""
-
-        store_iter = 5
-        store_mult = 1.3
-        deltas = []
-        G_dir = np.zeros(self.W.size, dtype=self.dtype)
-        vals = np.zeros(iters, dtype=self.dtype)
-
-        base_grad = -grad
-        delta = init_delta
-        residual = base_grad - self.G(init_delta, damping=self.damping)
-        res_norm = np.dot(residual, residual)
-        direction = residual.copy()
-
-        for i in range(iters):
-            if self.debug:
-                print "-" * 20
-                print "CG iteration", i
-                print "delta norm", np.linalg.norm(delta)
-                print "direction norm", np.linalg.norm(direction)
-
-            self.G(direction, damping=self.damping, output=G_dir)
-
-            # calculate step size
-            step = res_norm / np.dot(direction, G_dir)
-
-            if self.debug:
-                print "step", step
-
-                self.check_G(G_dir, self.inputs, self.targets,
-                             direction, self.damping)
-
-                assert np.isfinite(step)
-                assert step >= 0
-                assert (np.linalg.norm(np.dot(direction, G_dir)) >=
-                        np.linalg.norm(np.dot(direction,
-                                              self.G(direction, damping=0))))
-
-            # update weight delta
-            delta += step * direction
-
-            # update residual
-            residual -= step * G_dir
-            new_res_norm = np.dot(residual, residual)
-
-            if new_res_norm < 1e-20:
-                # early termination (mainly to prevent numerical errors);
-                # if this ever triggers, it's probably because the minimum
-                # gap in the normal termination condition (below) is too low.
-                # this only occurs on really simple problems
-                break
-
-            # update direction
-            beta = new_res_norm / res_norm
-            direction *= beta
-            direction += residual
-
-            res_norm = new_res_norm
-
-            if i == store_iter:
-                deltas += [(i, np.copy(delta))]
-                store_iter = int(store_iter * store_mult)
-
-            # martens termination conditions
-            vals[i] = -0.5 * np.dot(residual + base_grad, delta)
-
-            gap = max(int(0.1 * i), 10)
-
-            if self.debug:
-                print "termination val", vals[i]
-
-            if (i > gap and vals[i - gap] < 0 and
-                    (vals[i] - vals[i - gap]) / vals[i] < 5e-6 * gap):
-                break
-
-        deltas += [(i, np.copy(delta))]
-
-        return deltas
-
     def run_batches(self, inputs, targets, CG_iter=250, init_damping=1.0,
                     max_epochs=1000, batch_size=None, test=None,
-                    target_err=1e-6, plotting=False, classification=False,
+                    target_err=1e-6, plotting=False, test_err=None,
                     file_output=None):
-        """Apply Hessian-free algorithm with a sequence of minibatches."""
+        """Apply Hessian-free algorithm with a sequence of minibatches.
+
+        :param inputs: input vectors (or a callable plant that will generate
+            the input vectors dynamically)
+        :param targets: target vectors
+        :param CG_iter: the maximum number of CG iterations to run per epoch
+        :param init_damping: the initial value of the Tikhonov damping
+        :param max_epochs: the maximum number of epochs to run
+        :param batch_size: the size of the minibatch to use in each epoch
+        :param test: tuple of (inputs,targets) to use as the test data (if None
+            then it will just use the same inputs and targets as training)
+        :param target_err: run will terminate if this test error is reached
+        :param plotting: if True then data from the run will be output to a
+            file, which can be displayed via dataplotter.py
+        :param test_err: a custom error function to be applied to
+            the test data (e.g., classification error)
+        :param file_output: output files from the run will use this as a prefix
+        """
 
         if self.debug:
             print_period = 1
@@ -528,6 +167,8 @@ class HessianFF(object):
         init_delta = np.zeros(self.W.size, dtype=self.dtype)
         self.damping = init_damping
         test_errs = []
+        best_W = None
+        best_error = None
 
         plant = inputs if callable(inputs) else None
 
@@ -538,8 +179,6 @@ class HessianFF(object):
             plot_vars = ["new_err", "l_rate", "np.linalg.norm(delta)",
                          "self.damping", "np.linalg.norm(self.W)",
                          "deltas[-1][0]", "test_errs[-1]"]
-            if classification:
-                plot_vars += ["class_err"]
             for v in plot_vars:
                 plots[v] = []
 
@@ -670,22 +309,25 @@ class HessianFF(object):
             self.GPU_activations = None
 
             # compute test error
-            if test is not None:
-                test_errs += [self.error(self.W, test[0], test[1])]
+            if test is None:
+                test_in, test_t = self.inputs, self.targets
             else:
-                test_errs += [new_err]
+                test_in, test_t = test[0], test[1]
 
-            if classification:
-                output = self.forward(test[0] if test is not None else inputs,
-                                      self.W)[-1]
-                class_err = np.mean(np.argmax(output, axis=-1) !=
-                                    np.argmax(test[1] if test is not None
-                                              else targets, axis=-1))
+            if test_err is None:
+                err = self.error(self.W, test_in, test_t)
+            else:
+                output = self.forward(test_in, self.W)[-1]
+                err = test_err(output, test_t)
+            test_errs += [err]
 
             if i % print_period == 0:
                 print "test error", test_errs[-1]
-                if classification:
-                    print "classification error", class_err
+
+            # save the weights with the best error
+            if best_W is None or test_errs[-1] < best_error:
+                best_W = self.W.copy()
+                best_error = test_errs[-1]
 
             # dump plot data
             if plotting:
@@ -709,6 +351,415 @@ class HessianFF(object):
             if i > 20 and test_errs[-10] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break
+
+        self.W[:] = best_W
+
+    def init_weights(self, shapes, coeff=1.0, init_type="sparse"):
+        """Weight initialization, given shapes of weight matrices (including
+        bias row)."""
+
+        W = [np.zeros(s, dtype=self.dtype) for s in shapes]
+
+        if init_type == "sparse":
+            # sparse initialization (from martens)
+            num_conn = 15
+            for i, s in enumerate(shapes):
+                for j in range(s[1]):
+                    # pick num_conn random pre neurons (omitting "bias" neuron)
+                    indices = np.random.choice(np.arange(s[0] - 1),
+                                               size=min(num_conn, s[0] - 1),
+                                               replace=False)
+
+                    # connect to post
+                    W[i][indices, j] = np.random.randn(indices.size) * coeff
+        elif init_type == "uniform":
+            for i, s in enumerate(shapes):
+                pre_n = s[0] - 1
+                W[i][:-1] = np.random.uniform(-coeff / np.sqrt(pre_n),
+                                              coeff / np.sqrt(pre_n),
+                                              (pre_n, s[1]))
+        else:
+            raise ValueError("Unknown weight initialization (%s)" % init_type)
+
+        W = np.concatenate([w.flatten() for w in W])
+
+        return W
+
+    def compute_offsets(self):
+        """Precompute offsets for layers in the overall parameter vector."""
+
+        n_params = [(self.shape[pre] + 1) * self.shape[post]
+                    for pre in self.conns
+                    for post in self.conns[pre]]
+        self.offsets = {}
+        offset = 0
+        for pre in self.conns:
+            for post in self.conns[pre]:
+                n_params = (self.shape[pre] + 1) * self.shape[post]
+                self.offsets[(pre, post)] = (
+                    offset,
+                    offset + n_params - self.shape[post],
+                    offset + n_params)
+                offset += n_params
+
+    def get_weights(self, params, conn, separate=True):
+        """Get weight matrix for a connection from overall parameter vector."""
+
+        offset, W_end, b_end = self.offsets[conn]
+        if separate:
+            W = params[offset:W_end]
+            b = params[W_end:b_end]
+
+            return (W.reshape((self.shape[conn[0]],
+                               self.shape[conn[1]])),
+                    b)
+        else:
+            return params[offset:b_end].reshape((self.shape[conn[0]] + 1,
+                                                 self.shape[conn[1]]))
+
+    def forward(self, input, params, deriv=False):
+        """Compute feedforward activations for given input and parameters.
+
+        If deriv=True then also compute the derivative of the activations.
+        """
+
+        if callable(input):
+            raise TypeError("Cannot use a dynamic plant with a one-step "
+                            "feedforward network; use HessianRNN instead.")
+
+        if input.ndim < 2:
+            # then we've just been given a single sample (rather than batch)
+            input = input[None, :]
+
+        activations = [None for _ in range(self.n_layers)]
+        if deriv:
+            d_activations = [None for _ in range(self.n_layers)]
+
+        for i in range(self.n_layers):
+            if i == 0:
+                inputs = input
+            else:
+                inputs = np.zeros((input.shape[0], self.shape[i]),
+                                  dtype=self.dtype)
+                for pre in self.back_conns[i]:
+                    W, b = self.get_weights(params, (pre, i))
+                    inputs += np.dot(activations[pre], W) + b
+                    # note: we're applying a bias on each connection (rather
+                    # than one for each neuron). just because it's easier than
+                    # tracking how many connections there are for each layer.
+            activations[i] = self.act[i](inputs)
+
+            if deriv:
+                d_activations[i] = self.deriv[i](
+                    activations[i] if self.layer_types[i].use_activations
+                    else inputs)
+
+        if deriv:
+            return activations, d_activations
+
+        return activations
+
+    def error(self, W=None, inputs=None, targets=None):
+        """Compute network error."""
+
+        W = self.W if W is None else W
+        inputs = self.inputs if inputs is None else inputs
+        targets = self.targets if targets is None else targets
+
+        if (W is self.W and inputs is self.inputs and
+                self.activations is not None):
+            # use cached activations
+            outputs = self.activations[-1]
+        else:
+            # compute activations
+            outputs = self.forward(inputs, W)[-1]
+
+        # note: np.nan can be used in the target to specify places
+        # where the target is not defined. those get translated to
+        # zero error here.
+        if self.error_type == "mse":
+            error = np.sum(np.nan_to_num(outputs - targets) ** 2)
+            error /= 2 * len(inputs)
+        elif self.error_type == "ce":
+            error = -np.sum(np.nan_to_num(targets) * np.log(outputs))
+            error /= len(inputs)
+
+        return error
+
+    def J_dot(self, J, vec):
+        """Compute the product of a Jacobian and some vector."""
+
+        # In many cases the Jacobian is a diagonal matrix, so it is more
+        # efficient to just represent it with the diagonal vector.  This
+        # function just lets those two be used interchangeably.
+
+        if J.ndim == 2:
+            # note: the first dimension is the batch, so ndim==2 means
+            # this is a diagonal representation
+            return J * vec
+        else:
+            return np.einsum("ijk,ik->ij", J, vec)
+
+    def calc_grad(self):
+        """Compute parameter gradient."""
+
+        for l in self.layer_types:
+            if l.d_state is not None:
+                raise TypeError("Cannot use neurons with internal state in "
+                                "a one-step feedforward network; use "
+                                "HessianRNN instead.")
+
+        grad = np.zeros_like(self.W)
+
+        # note: this uses the cached activations, so the forward
+        # pass has already been run elsewhere
+
+        # backpropagate error
+        deltas = [None for _ in range(self.n_layers)]
+
+        if self.error_type == "mse":
+            error = np.nan_to_num(self.activations[-1] - self.targets)
+        elif self.error_type == "ce":
+            error = -np.nan_to_num(self.targets) / self.activations[-1]
+
+        deltas[-1] = self.J_dot(self.d_activations[-1], error)
+
+        for i in range(self.n_layers - 2, -1, -1):
+            error = np.zeros_like(self.activations[i])
+            for post in self.conns[i]:
+                c_error = np.dot(deltas[post],
+                                 self.get_weights(self.W, (i, post))[0].T)
+                error += c_error
+
+                offset, W_end, b_end = self.offsets[(i, post)]
+                grad[offset:W_end] = self.outer_sum(
+                    self.activations[i] if self.GPU_activations is None
+                    else [i], deltas[post])
+                np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
+
+            deltas[i] = self.J_dot(self.d_activations[i], error)
+
+        grad /= self.inputs.shape[0]
+
+        return grad
+
+    def check_grad(self, calc_grad):
+        """Check gradient via finite differences (for debugging)."""
+
+        eps = 1e-6
+        grad = np.zeros(calc_grad.shape)
+        for i, val in enumerate(self.W):
+            inc_W = np.copy(self.W)
+            dec_W = np.copy(self.W)
+            inc_W[i] = val + eps
+            dec_W[i] = val - eps
+
+            error_inc = self.error(inc_W, self.inputs, self.targets)
+            error_dec = self.error(dec_W, self.inputs, self.targets)
+            grad[i] = (error_inc - error_dec) / (2 * eps)
+        try:
+            assert np.allclose(grad, calc_grad, rtol=1e-3)
+        except AssertionError:
+            print calc_grad
+            print grad
+            print calc_grad - grad
+            print calc_grad / grad
+            raise
+
+    def gradient_descent(self, inputs, targets, l_rate=1):
+        """Basic first-order gradient descent (for comparison)."""
+
+        self.activations, self.d_activations = self.forward(inputs,
+                                                            self.W,
+                                                            deriv=True)
+        self.GPU_activations = None
+
+        if callable(inputs):
+            self.inputs = inputs.get_inputs()
+            self.targets = inputs.get_targets()
+        else:
+            self.inputs = inputs
+            self.targets = targets
+
+        # compute gradient
+        grad = self.calc_grad()
+
+        if self.debug:
+            self.check_grad(grad)
+
+        # update weights
+        self.W -= l_rate * grad
+
+    def G(self, v, damping=0, output=None):
+        """Compute Gauss-Newton matrix-vector product."""
+
+        if output is None:
+            Gv = np.zeros(self.W.size, dtype=self.dtype)
+        else:
+            Gv = output
+
+        # R forward pass
+        R_activations = [None for _ in range(self.n_layers)]
+        R_activations[0] = np.zeros_like(self.activations[0])
+        for i in range(1, self.n_layers):
+            R_input = np.zeros_like(self.activations[i])
+            for pre in self.back_conns[i]:
+                vw, vb = self.get_weights(v, (pre, i))
+                Ww, _ = self.get_weights(self.W, (pre, i))
+                R_input += np.dot(self.activations[pre], vw) + vb
+                R_input += np.dot(R_activations[pre], Ww)
+
+            R_activations[i] = self.J_dot(self.d_activations[i], R_input)
+
+        # backward pass
+        R_deltas = [None for _ in range(self.n_layers)]
+
+        if self.error_type == "mse":
+            # second derivative of error function is 1
+            R_error = R_activations[-1]
+        elif self.error_type == "ce":
+            R_error = (R_activations[-1] *
+                       np.nan_to_num(self.targets) / self.activations[-1] ** 2)
+
+        R_deltas[-1] = self.J_dot(self.d_activations[-1], R_error)
+
+        for i in range(self.n_layers - 2, -1, -1):
+            R_error = np.zeros_like(self.activations[i])
+            for post in self.conns[i]:
+                W, _ = self.get_weights(self.W, (i, post))
+                R_error += np.dot(R_deltas[post], W.T)
+
+                offset, W_end, b_end = self.offsets[(i, post)]
+                Gv[offset:W_end] = self.outer_sum(
+                    self.activations[i] if self.GPU_activations is None
+                    else [i], R_deltas[post])
+                np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
+
+            R_deltas[i] = self.J_dot(self.d_activations[i], R_error)
+
+        Gv /= len(self.inputs)
+
+        Gv += damping * v  # Tikhonov damping
+
+        return Gv
+
+    def check_G(self, calc_G, inputs, targets, v, damping=0):
+        """Check Gv calculation via finite differences (for debugging)."""
+
+        eps = 1e-6
+        N = self.W.size
+
+        g = np.zeros(N)
+        for n, input in enumerate(inputs):
+            base = self.forward(input, self.W)[-1]
+
+            J = np.zeros((base.size, N))
+            for i in range(N):
+                inc_i = np.zeros(N)
+                inc_i[i] = eps
+
+                J[:, i] = (self.forward(input, self.W + inc_i)[-1] -
+                           base) / eps
+
+            if self.error_type == "mse":
+                L = np.eye(base.size)
+            elif self.error_type == "ce":
+                L = np.diag((targets[n] / base ** 2).squeeze())
+
+            g += np.dot(np.dot(J.T, np.dot(L, J)), v)
+
+        g /= inputs.shape[0]
+
+        g += damping * v
+
+        try:
+            assert np.allclose(g, calc_G, rtol=1e-3)
+        except AssertionError:
+            print g
+            print calc_G
+            print calc_G - g
+            print calc_G / g
+            raise
+
+    def conjugate_gradient(self, init_delta, grad, iters=250):
+        """Compute weight update using conjugate gradient algorithm."""
+
+        store_iter = 5
+        store_mult = 1.3
+        deltas = []
+        G_dir = np.zeros(self.W.size, dtype=self.dtype)
+        vals = np.zeros(iters, dtype=self.dtype)
+
+        base_grad = -grad
+        delta = init_delta
+        residual = base_grad - self.G(init_delta, damping=self.damping)
+        res_norm = np.dot(residual, residual)
+        direction = residual.copy()
+
+        for i in range(iters):
+            if self.debug:
+                print "-" * 20
+                print "CG iteration", i
+                print "delta norm", np.linalg.norm(delta)
+                print "direction norm", np.linalg.norm(direction)
+
+            self.G(direction, damping=self.damping, output=G_dir)
+
+            # calculate step size
+            step = res_norm / np.dot(direction, G_dir)
+
+            if self.debug:
+                print "step", step
+
+                self.check_G(G_dir, self.inputs, self.targets,
+                             direction, self.damping)
+
+                assert np.isfinite(step)
+                assert step >= 0
+                assert (np.linalg.norm(np.dot(direction, G_dir)) >=
+                        np.linalg.norm(np.dot(direction,
+                                              self.G(direction, damping=0))))
+
+            # update weight delta
+            delta += step * direction
+
+            # update residual
+            residual -= step * G_dir
+            new_res_norm = np.dot(residual, residual)
+
+            if new_res_norm < 1e-20:
+                # early termination (mainly to prevent numerical errors);
+                # if this ever triggers, it's probably because the minimum
+                # gap in the normal termination condition (below) is too low.
+                # this only occurs on really simple problems
+                break
+
+            # update direction
+            beta = new_res_norm / res_norm
+            direction *= beta
+            direction += residual
+
+            res_norm = new_res_norm
+
+            if i == store_iter:
+                deltas += [(i, np.copy(delta))]
+                store_iter = int(store_iter * store_mult)
+
+            # martens termination conditions
+            vals[i] = -0.5 * np.dot(residual + base_grad, delta)
+
+            gap = max(int(0.1 * i), 10)
+
+            if self.debug:
+                print "termination val", vals[i]
+
+            if (i > gap and vals[i - gap] < 0 and
+                    (vals[i] - vals[i - gap]) / vals[i] < 5e-6 * gap):
+                break
+
+        deltas += [(i, np.copy(delta))]
+
+        return deltas
 
     def init_GPU(self):
         dev = pycuda.autoinit.device

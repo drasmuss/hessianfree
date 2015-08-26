@@ -15,6 +15,17 @@ from hessianff import HessianFF
 
 class HessianRNN(HessianFF):
     def __init__(self, shape, struc_damping=0.0, rec_layers=None, **kwargs):
+        """Initialize the parameters of the network.
+
+        :param struc_damping: controls scale of structural damping (relative
+            to Tikhonov damping)
+        :param rec_layers: by default, all layers except the first and last
+            are recurrently connected. A list of booleans can be passed here
+            to override that on a layer-by-layer basis.
+
+        See HessianFF for the rest of the parameters.
+        """
+
         self.struc_damping = struc_damping
 
         if rec_layers is None:
@@ -52,6 +63,7 @@ class HessianRNN(HessianFF):
 
     def get_weights(self, params, layer, separate=True, recurrent=False):
         """Get weight matrix for a layer from the overall parameter vector."""
+
         # TODO: get rid of recurrent parameter, just check if layer is a tuple
         if not recurrent:
             return super(HessianRNN, self).get_weights(params, layer, separate)
@@ -71,18 +83,23 @@ class HessianRNN(HessianFF):
                                                      self.shape[layer]))
 
     def forward(self, input, params, deriv=False):
-        """Compute activations for given input sequence and parameters."""
+        """Compute activations for given input sequence and parameters.
+
+        If deriv=True then also compute the derivative of the activations.
+        """
 
         # input shape = [batch_size, seq_len, input_dim]
         # activations shape = [n_layers, batch_size, seq_len, layer_size]
 
         if callable(input):
+            # reset the plant
             input.reset()
         elif input.ndim < 3:
             # then we've just been given a single sample (rather than batch)
             input = input[None, :, :]
 
         for l in self.layer_types:
+            # reset any state in the nonlinearities
             l.reset()
 
         activations = [np.zeros((input.shape[0], input.shape[1], l),
@@ -97,13 +114,16 @@ class HessianRNN(HessianFF):
                   for i in np.arange(self.n_layers)]
         for s in range(input.shape[1]):
             for i in range(self.n_layers):
-                # feedforward input
                 if i == 0:
+                    # get the external input
                     if callable(input):
+                        # call the plant with the output of the previous
+                        # timestep to generate the next input
                         ff_input = input(activations[-1][:, s - 1])
                     else:
                         ff_input = input[:, s]
                 else:
+                    # compute feedforward input
                     ff_input = np.zeros_like(activations[i][:, s])
                     for pre in self.back_conns[i]:
                         W, b = self.get_weights(params, (pre, i))
@@ -115,7 +135,7 @@ class HessianRNN(HessianFF):
                         rec_input = np.dot(activations[i][:, s - 1],
                                            W_recs[i][0])
                     else:
-                        # bias input on first timestep
+                        # apply bias input on first timestep
                         rec_input = W_recs[i][1]
                 else:
                     rec_input = 0
@@ -216,57 +236,6 @@ class HessianRNN(HessianFF):
         grad /= self.inputs.shape[0]
 
         return grad
-
-    def check_G(self, calc_G, inputs, targets, v, damping=0):
-        """Check Gv calculation via finite differences (for debugging)."""
-
-        # TODO: get struc_damping check to work
-        assert self.struc_damping == 0
-
-        eps = 1e-6
-        N = self.W.size
-        sig_len = inputs.shape[1]
-        output_d = targets.shape[2]
-
-        Gv = np.zeros(N)
-        for b in range(inputs.shape[0]):
-            base = self.forward(inputs[b], self.W)[-1].squeeze(axis=0)
-
-            J = np.zeros((sig_len, N, output_d))
-            for i in range(N):
-                inc_i = np.zeros(N)
-                inc_i[i] = eps
-
-                acts = self.forward(inputs[b],
-                                    self.W + inc_i)[-1].squeeze(axis=0)
-                J[:, i] = (acts - base) / eps
-
-            L = np.zeros((sig_len, output_d, output_d))
-            if self.error_type == "mse":
-                L[:] = np.eye(output_d)
-            elif self.error_type == "ce":
-                for i in range(sig_len):
-                    L[i] = np.diag(targets[b][i] / base[i] ** 2)
-
-            G = np.zeros((N, N))
-            # sum over the signal
-            for i in range(sig_len):
-                G += np.dot(J[i], np.dot(L[i], J[i].T))
-
-            Gv += np.dot(G, v)
-
-        Gv /= inputs.shape[0]
-
-        Gv += damping * v
-
-        try:
-            assert np.allclose(Gv, calc_G, rtol=1e-3)
-        except AssertionError:
-            print Gv
-            print calc_G
-            print Gv - calc_G
-            print Gv / calc_G
-            raise
 
     def G(self, v, damping=0, output=None):
         """Compute Gauss-Newton matrix-vector product."""
@@ -390,3 +359,56 @@ class HessianRNN(HessianFF):
         Gv += damping * v  # Tikhonov damping
 
         return Gv
+
+    def check_G(self, calc_G, inputs, targets, v, damping=0):
+        """Check Gv calculation via finite differences (for debugging)."""
+
+        # TODO: get struc_damping check to work
+        assert self.struc_damping == 0
+
+        eps = 1e-6
+        N = self.W.size
+        sig_len = inputs.shape[1]
+        output_d = targets.shape[2]
+
+        Gv = np.zeros(N)
+        for b in range(inputs.shape[0]):
+            base = self.forward(inputs[b], self.W)[-1].squeeze(axis=0)
+
+            # compute the Jacobian
+            J = np.zeros((sig_len, N, output_d))
+            for i in range(N):
+                inc_i = np.zeros(N)
+                inc_i[i] = eps
+
+                acts = self.forward(inputs[b],
+                                    self.W + inc_i)[-1].squeeze(axis=0)
+                J[:, i] = (acts - base) / eps
+
+            # second derivative of loss function
+            L = np.zeros((sig_len, output_d, output_d))
+            if self.error_type == "mse":
+                L[:] = np.eye(output_d)
+            elif self.error_type == "ce":
+                for i in range(sig_len):
+                    L[i] = np.diag(targets[b][i] / base[i] ** 2)
+
+            G = np.zeros((N, N))
+            # sum over the signal
+            for i in range(sig_len):
+                G += np.dot(J[i], np.dot(L[i], J[i].T))
+
+            Gv += np.dot(G, v)
+
+        Gv /= inputs.shape[0]
+
+        Gv += damping * v
+
+        try:
+            assert np.allclose(Gv, calc_G, rtol=1e-3)
+        except AssertionError:
+            print Gv
+            print calc_G
+            print Gv - calc_G
+            print Gv / calc_G
+            raise
