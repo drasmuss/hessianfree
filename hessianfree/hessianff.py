@@ -429,6 +429,9 @@ class HessianFF(object):
     def get_weights(self, params, conn, separate=True):
         """Get weight matrix for a connection from overall parameter vector."""
 
+        if conn not in self.offsets:
+            return None
+
         offset, W_end, b_end = self.offsets[conn]
         if separate:
             W = params[offset:W_end]

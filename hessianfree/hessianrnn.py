@@ -54,37 +54,15 @@ class HessianRNN(HessianFF):
 
         super(HessianRNN, self).compute_offsets()
 
-        self.rec_offsets = {}
-
+        # add in offsets for recurrent weights
         offset = len(self.W)  # note: gets called before rec_W added
         for l in range(self.n_layers):
             if self.rec_layers[l]:
-                self.rec_offsets[l] = (
+                self.offsets[(l, l)] = (
                     offset,
                     offset + self.shape[l] * self.shape[l],
                     offset + (self.shape[l] + 1) * self.shape[l])
                 offset += (self.shape[l] + 1) * self.shape[l]
-
-    def get_weights(self, params, layer, separate=True, recurrent=False):
-        """Get weight matrix for a layer from the overall parameter vector."""
-
-        # TODO: get rid of recurrent parameter, just check if layer is a tuple
-        if not recurrent:
-            return super(HessianRNN, self).get_weights(params, layer, separate)
-        else:
-            if layer not in self.rec_offsets:
-                return None
-            offset, W_end, b_end = self.rec_offsets[layer]
-            if separate:
-                W = params[offset:W_end]
-                b = params[W_end:b_end]
-
-                return (W.reshape((self.shape[layer],
-                                   self.shape[layer])),
-                        b)
-            else:
-                return params[offset:b_end].reshape((self.shape[layer] + 1,
-                                                     self.shape[layer]))
 
     def forward(self, input, params, deriv=False):
         """Compute activations for given input sequence and parameters.
@@ -114,7 +92,7 @@ class HessianRNN(HessianFF):
             d_activations = [np.zeros_like(activations[i])
                              for i in range(self.n_layers)]
 
-        W_recs = [self.get_weights(params, i, recurrent=True)
+        W_recs = [self.get_weights(params, (i, i))
                   for i in np.arange(self.n_layers)]
         for s in range(input.shape[1]):
             for i in range(self.n_layers):
@@ -179,7 +157,7 @@ class HessianRNN(HessianFF):
         grad = np.zeros_like(self.W)
         deltas = [np.zeros((self.inputs.shape[0], l), dtype=self.dtype)
                   for l in self.shape]
-        W_recs = [self.get_weights(self.W, l, recurrent=True)
+        W_recs = [self.get_weights(self.W, (l, l))
                  for l in np.arange(self.n_layers)]
 
         # backpropagate error
@@ -225,7 +203,7 @@ class HessianRNN(HessianFF):
 
                 # gradient for recurrent weights
                 if self.rec_layers[l]:
-                    offset, W_end, b_end = self.rec_offsets[l]
+                    offset, W_end, b_end = self.offsets[(l, l)]
                     if s > 0:
                         grad[offset:W_end] += (
                             self.outer_sum(self.activations[l][:, s - 1]
@@ -257,9 +235,9 @@ class HessianRNN(HessianFF):
                     for i in np.arange(self.n_layers)]
         R_activations = [None for _ in self.shape]
         R_outputs = np.zeros_like(self.activations[-1])
-        v_recs = [self.get_weights(v, l, recurrent=True)
+        v_recs = [self.get_weights(v, (l, l))
                   for l in np.arange(self.n_layers)]
-        W_recs = [self.get_weights(self.W, l, recurrent=True)
+        W_recs = [self.get_weights(self.W, (l, l))
                   for l in np.arange(self.n_layers)]
 
         for s in np.arange(sig_len):
@@ -348,7 +326,7 @@ class HessianRNN(HessianFF):
 
                 # recurrent gradient
                 if self.rec_layers[l]:
-                    offset, W_end, b_end = self.rec_offsets[l]
+                    offset, W_end, b_end = self.offsets[(l, l)]
                     if s > 0:
                         Gv[offset:W_end] += (
                             self.outer_sum(self.activations[l][:, s - 1]
