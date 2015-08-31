@@ -14,7 +14,8 @@ from hessianff import HessianFF
 
 
 class HessianRNN(HessianFF):
-    def __init__(self, shape, struc_damping=0.0, rec_layers=None, **kwargs):
+    def __init__(self, shape, struc_damping=0.0, rec_layers=None,
+                 W_rec_params={}, **kwargs):
         """Initialize the parameters of the network.
 
         :param struc_damping: controls scale of structural damping (relative
@@ -22,6 +23,8 @@ class HessianRNN(HessianFF):
         :param rec_layers: by default, all layers except the first and last
             are recurrently connected. A list of booleans can be passed here
             to override that on a layer-by-layer basis.
+        :param W_rec_params: weight initialization parameter dict for recurrent
+            weights (passed to init_weights, see parameter descriptions there)
 
         See HessianFF for the rest of the parameters.
         """
@@ -39,11 +42,12 @@ class HessianRNN(HessianFF):
         super(HessianRNN, self).__init__(shape, **kwargs)
 
         # add on recurrent weights
-        self.W = np.concatenate(
-            (self.W, self.init_weights([(self.shape[l] + 1, self.shape[l])
-                                        for l in range(self.n_layers)
-                                        if rec_layers[l]],
-                                       coeff=self.W_init_coeff)))
+        if kwargs.get("load_weights", None) is None:
+            self.W = np.concatenate(
+                (self.W, self.init_weights([(self.shape[l], self.shape[l])
+                                            for l in range(self.n_layers)
+                                            if rec_layers[l]],
+                                           **W_rec_params)))
 
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""

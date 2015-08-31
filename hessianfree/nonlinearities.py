@@ -121,7 +121,7 @@ class Continuous(Nonlinearity):
         self.base = base
         self.coeff = dt / tau
 
-        self.d_state = np.diag(1 - self.coeff)
+        self.d_state = np.diag(1 - self.coeff).astype(np.float32)
 
         self.reset()
 

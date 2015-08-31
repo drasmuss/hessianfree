@@ -26,7 +26,7 @@ import nonlinearities
 
 class HessianFF(object):
     def __init__(self, shape, layer_types=nonlinearities.Logistic(),
-                 conns=None, error_type="mse", W_init_coeff=1.0,
+                 conns=None, error_type="mse", W_init_params={},
                  use_GPU=False, load_weights=None, debug=False):
         """Initialize the parameters of the network.
 
@@ -37,7 +37,8 @@ class HessianFF(object):
             specifying the connections between layers (default is to connect in
             series)
         :param error_type: type of loss function (mse or ce)
-        :param W_init_coeff: scales the magnitude of the initial weights
+        :param W_init_params: parameter dict passed to init_weights (see
+            parameter descriptions in that function)
         :param use_GPU: run certain operations on GPU to speed them up
             (requires PyCUDA to be installed)
         :param load_weights: load initial weights from given array or filename
@@ -47,7 +48,6 @@ class HessianFF(object):
         self.use_GPU = use_GPU
         self.debug = debug
         self.shape = shape
-        self.W_init_coeff = W_init_coeff
         self.n_layers = len(shape)
         self.dtype = np.float64 if debug else np.float32
 
@@ -97,9 +97,9 @@ class HessianFF(object):
                                  np.arange(1, self.n_layers)):
                 conns[pre] = [post]
 
-        self.conns = OrderedDict(conns)
-        # note: conns is an ordered dict to ensure compute_offsets
-        # lines up with the order of init_weights (both loop over conns)
+        self.conns = OrderedDict(sorted(conns.items(), key=lambda x: x[0]))
+        # note: conns is an ordered dict sorted by layer so that we can
+        # reliably loop over the items (in compute_offsets and init_weights)
 
         # maintain a list of backwards connections as well (for efficient
         # lookup in the other direction)
@@ -122,11 +122,10 @@ class HessianFF(object):
                 raise TypeError("Loaded weights (%s) don't match "
                                 "self.dtype (%s)" % (self.W.dtype, self.dtype))
         else:
-            self.W = self.init_weights([(self.shape[pre] + 1,
-                                         self.shape[post])
-                                        for pre in self.conns
-                                        for post in self.conns[pre]],
-                                       W_init_coeff, init_type="sparse")
+            self.W = self.init_weights(
+                [(self.shape[pre], self.shape[post])
+                 for pre in self.conns for post in self.conns[pre]],
+                **W_init_params)
 
         self.compute_offsets()
 
@@ -354,32 +353,57 @@ class HessianFF(object):
 
         self.W[:] = best_W
 
-    def init_weights(self, shapes, coeff=1.0, init_type="sparse"):
-        """Weight initialization, given shapes of weight matrices (including
-        bias row)."""
+    def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
+        """Weight initialization, given shapes of weight matrices.
 
-        W = [np.zeros(s, dtype=self.dtype) for s in shapes]
+        Note: coeff, biases, and init_type can be specified by the
+        W_init_params parameter in __init__.  Each can be specified as a
+        single value (for all matrices) or as a list giving a value for each
+        matrix.
 
-        if init_type == "sparse":
-            # sparse initialization (from martens)
-            num_conn = 15
-            for i, s in enumerate(shapes):
+        :param shapes: list of (pre,post) shapes for each weight matrix
+        :param coeff: scales the magnitude of the connection weights
+        :param biases: bias values for the post of each matrix
+        :param init_type: type of initialization to use (currently supports
+            'sparse', 'uniform', 'gaussian')
+        """
+
+        # if given single parameters, expand for all matrices
+        if isinstance(coeff, (int, float)):
+            coeff = [coeff] * len(shapes)
+        if isinstance(biases, (int, float)):
+            biases = [biases] * len(shapes)
+        if isinstance(init_type, str):
+            init_type = [init_type] * len(shapes)
+
+        W = [np.zeros((pre + 1, post), dtype=self.dtype)
+             for pre, post in shapes]
+
+        for i, s in enumerate(shapes):
+            if init_type[i] == "sparse":
+                # sparse initialization (from martens)
+                num_conn = 15
+
                 for j in range(s[1]):
-                    # pick num_conn random pre neurons (omitting "bias" neuron)
-                    indices = np.random.choice(np.arange(s[0] - 1),
-                                               size=min(num_conn, s[0] - 1),
+                    # pick num_conn random pre neurons
+                    indices = np.random.choice(np.arange(s[0]),
+                                               size=min(num_conn, s[0]),
                                                replace=False)
 
                     # connect to post
-                    W[i][indices, j] = np.random.randn(indices.size) * coeff
-        elif init_type == "uniform":
-            for i, s in enumerate(shapes):
-                pre_n = s[0] - 1
-                W[i][:-1] = np.random.uniform(-coeff / np.sqrt(pre_n),
-                                              coeff / np.sqrt(pre_n),
-                                              (pre_n, s[1]))
-        else:
-            raise ValueError("Unknown weight initialization (%s)" % init_type)
+                    W[i][indices, j] = np.random.randn(indices.size) * coeff[i]
+            elif init_type[i] == "uniform":
+                W[i][:-1] = np.random.uniform(-coeff[i] / np.sqrt(s[0]),
+                                              coeff[i] / np.sqrt(s[0]),
+                                              (s[0], s[1]))
+            elif init_type[i] == "gaussian":
+                W[i][:-1] = np.random.randn(s[0], s[1]) * coeff[i]
+            else:
+                raise ValueError("Unknown weight initialization (%s)"
+                                 % init_type)
+
+            # set biases
+            W[i][-1, :] = biases[i]
 
         W = np.concatenate([w.flatten() for w in W])
 
@@ -477,6 +501,10 @@ class HessianFF(object):
         # note: np.nan can be used in the target to specify places
         # where the target is not defined. those get translated to
         # zero error here.
+
+        # we don't want to confuse nan outputs with nan targets
+        assert np.all(np.isfinite(outputs))
+
         if self.error_type == "mse":
             error = np.sum(np.nan_to_num(outputs - targets) ** 2)
             error /= 2 * len(inputs)
