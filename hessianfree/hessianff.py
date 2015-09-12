@@ -157,7 +157,7 @@ class HessianFF(object):
 
         if self.debug:
             print_period = 1
-            np.seterr(all="raise")
+#             np.seterr(all="raise")
         else:
             print_period = 10
 
@@ -207,8 +207,8 @@ class HessianFF(object):
                 if batch_size is not None:
                     plant.shape[0] = batch_size
                 self.forward(plant, self.W)
-                self.inputs = plant.get_inputs()
-                self.targets = plant.get_targets()
+                self.inputs = plant.get_inputs().astype(np.float32)
+                self.targets = plant.get_targets().astype(np.float32)
 
             if not(self.inputs.dtype == self.targets.dtype == np.float32):
                 raise TypeError("Input type must be np.float32")
@@ -528,6 +528,7 @@ class HessianFF(object):
             return J * vec
         else:
             return np.einsum("ijk,ik->ij", J, vec)
+#             return np.einsum("ijk,ij->ik", J, vec)
 
     def calc_grad(self):
         """Compute parameter gradient."""
@@ -589,10 +590,16 @@ class HessianFF(object):
         try:
             assert np.allclose(grad, calc_grad, rtol=1e-3)
         except AssertionError:
+            print "calc_grad"
             print calc_grad
+            print "finite grad"
             print grad
+            print "calc_grad - finite grad"
             print calc_grad - grad
+            print "calc_grad / finite grad"
             print calc_grad / grad
+            print "W"
+            print self.W
             raise
 
     def gradient_descent(self, inputs, targets, l_rate=1):
@@ -672,14 +679,14 @@ class HessianFF(object):
 
         return Gv
 
-    def check_G(self, calc_G, inputs, targets, v, damping=0):
+    def check_G(self, calc_G, v, damping=0):
         """Check Gv calculation via finite differences (for debugging)."""
 
         eps = 1e-6
         N = self.W.size
 
         g = np.zeros(N)
-        for n, input in enumerate(inputs):
+        for n, input in enumerate(self.inputs):
             base = self.forward(input, self.W)[-1]
 
             J = np.zeros((base.size, N))
@@ -693,11 +700,11 @@ class HessianFF(object):
             if self.error_type == "mse":
                 L = np.eye(base.size)
             elif self.error_type == "ce":
-                L = np.diag((targets[n] / base ** 2).squeeze())
+                L = np.diag((self.targets[n] / base ** 2).squeeze())
 
             g += np.dot(np.dot(J.T, np.dot(L, J)), v)
 
-        g /= inputs.shape[0]
+        g /= self.inputs.shape[0]
 
         g += damping * v
 
@@ -725,6 +732,9 @@ class HessianFF(object):
         res_norm = np.dot(residual, residual)
         direction = residual.copy()
 
+        if self.debug:
+            self.check_grad(grad)
+
         for i in range(iters):
             if self.debug:
                 print "-" * 20
@@ -740,8 +750,7 @@ class HessianFF(object):
             if self.debug:
                 print "step", step
 
-                self.check_G(G_dir, self.inputs, self.targets,
-                             direction, self.damping)
+                self.check_G(G_dir, direction, self.damping)
 
                 assert np.isfinite(step)
                 assert step >= 0

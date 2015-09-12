@@ -9,7 +9,7 @@ from hessianfree.hessianff import HessianFF
 from hessianfree.hessianrnn import HessianRNN
 
 from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
-                                        Continuous, Linear)
+                                        Continuous, Linear, Nonlinearity)
 
 
 def test_xor():
@@ -284,15 +284,14 @@ def test_continuous():
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
                        np.linspace(0, 1, sig_len))[:, :, None]
-    targets = np.tile(targets, (1, 1, 2))
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(shape=[1, 10, 2], struc_damping=0.0,
+    rnn = HessianRNN(shape=[1, 10, 1], struc_damping=0.0,
                      layer_types=[Linear(), nl, Logistic()], error_type="mse",
-                     use_GPU=False, debug=True)
+                     use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
                     test=test, max_epochs=100, plotting=True)
@@ -405,6 +404,112 @@ def test_plant():
     plt.title("outputs")
 
     plt.show()
+
+def test_plant2():
+    n_inputs = 15
+    sig_len = 10
+
+    class Plant(Nonlinearity):
+        def __init__(self, A, B, targets):
+            super(Plant, self).__init__(use_activations=False)
+
+            self.A = A
+            self.B = B
+            self.targets = targets
+
+            # derivative of state with respect to previous state
+            self.d_state = np.asarray(self.A)
+
+            # derivative of state with respect to input
+            self.d_input = np.asarray(self.B)
+
+            self.shape = [n_inputs, sig_len, len(A)]
+
+            self.reset()
+
+        def activation(self, x):
+            self.state = np.dot(self.state, self.A) + np.dot(x, self.B)
+            return self.state[:x.shape[0]]
+            # note: generally x will be the same shape as state, this just
+            # handles the case where that isn't true (e.g. passing a single
+            # item instead of batch)
+
+        def d_activation(self, x):
+            # derivative of output with respect to state
+            return np.ones_like(x)
+
+        def __call__(self, x):
+            self.inputs = np.concatenate((self.inputs, self.state[:, None, :]),
+                                         axis=1)
+            return self.state
+
+        def get_inputs(self):
+            return self.inputs
+
+        def get_targets(self):
+            return self.targets
+
+        def reset(self):
+            self.state = np.zeros((self.shape[0], self.shape[-1]),
+                                  dtype=np.float32)
+            self.inputs = np.zeros((self.shape[0], 0, self.shape[-1]),
+                                   dtype=np.float32)
+
+    targets = np.ones((n_inputs, sig_len, 2), dtype=np.float32)
+    targets[:, :, 1] = 0
+    targets[:, :-1, :] = np.nan
+
+    A = [[1, 0],
+         [0.1, 1]]
+    B = [[0, 0],
+         [0, 1]]
+#     A = [[1, 0],
+#          [0, 1]]
+#     B = [[1, 0],
+#          [0, 1]]
+
+    plant = Plant(A, B, targets)
+
+    test = (plant, None)
+
+    rnn = HessianRNN(shape=[2, 100, 100, 2], struc_damping=0.0,
+                     layer_types=[Linear(), Tanh(), Tanh(), plant],
+                     error_type="mse", debug=False,
+                     rec_layers=[False, True, True, False],
+                    conns={0:[1, 2], 1:[2], 2:[3]},
+                     W_init_params={"coeff": 0.01},
+                     W_rec_params={"coeff": 0.01})
+
+    rnn.run_batches(plant, None, CG_iter=100, batch_size=None,
+                    test=test, max_epochs=100, plotting=True,
+                    init_damping=1)
+
+    # using gradient descent (for comparison)
+#     for i in range(10000):
+#         if i % 100 == 0:
+#             print "iteration", i
+#         rnn.gradient_descent(plant, None, l_rate=0.01)
+
+
+    outputs = rnn.forward(plant, rnn.W)[-1]
+
+    plt.figure()
+    plt.plot(plant.get_inputs()[:, :, 0].squeeze().T)
+    plt.plot(plant.get_inputs()[:, :, 1].squeeze().T)
+    plt.title("inputs")
+
+    plt.figure()
+    plt.plot(plant.get_targets()[:, :, 0].squeeze().T)
+    plt.plot(plant.get_targets()[:, :, 1].squeeze().T)
+    plt.title("targets")
+
+    plt.figure()
+    plt.plot(outputs[:, :, 0].squeeze().T)
+    plt.plot(outputs[:, :, 1].squeeze().T)
+    plt.title("outputs")
+
+    plt.show()
+
 
 if len(sys.argv) < 2:
     test_xor()

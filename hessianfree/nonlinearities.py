@@ -121,28 +121,38 @@ class Continuous(Nonlinearity):
         self.base = base
         self.coeff = dt / tau
 
+        # derivative of state with respect to previous state
         self.d_state = np.diag(1 - self.coeff).astype(np.float32)
+
+        # derivative of state with respect to input
+        self.d_input = np.diag(self.coeff).astype(np.float32)
 
         self.reset()
 
     def activation(self, x):
         self.act_count += 1
 
+        # s_{t+1} = (1-c)s + cx
         self.state += (x - self.state) * self.coeff
 
         return self.base.activation(self.state)
 
     def d_activation(self, x):
+        # derivative of output with respect to state
+
         self.d_act_count += 1
 
         # sanity check that state is in sync
         assert self.act_count == self.d_act_count
 
+        # note: x is not used here, this relies on self.state being implicitly
+        # based on x (via self.activation()). hence the sanity check.
+
         act_d = self.base.d_activation(self.base.activation(self.state) if
                                        self.base.use_activations else
                                        self.state)
 
-        return act_d * self.coeff
+        return act_d
 
     def reset(self):
         self.state = 0.0
