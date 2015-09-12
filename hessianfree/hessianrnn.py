@@ -42,7 +42,7 @@ class HessianRNN(HessianFF):
         super(HessianRNN, self).__init__(shape, **kwargs)
 
         # add on recurrent weights
-        if kwargs.get("load_weights", None) is None:
+        if kwargs.get("load_weights", None) is None and np.any(rec_layers):
             self.W = np.concatenate(
                 (self.W, self.init_weights([(self.shape[l], self.shape[l])
                                             for l in range(self.n_layers)
@@ -123,11 +123,12 @@ class HessianRNN(HessianFF):
                     rec_input = 0
 
                 # apply activation function
-                activations[i][:, s] = self.act[i](ff_input + rec_input)
+                activations[i][:, s] = (
+                    self.layer_types[i].activation(ff_input + rec_input))
 
                 # compute derivative
                 if deriv:
-                    d_activations[i][:, s] = self.deriv[i](
+                    d_activations[i][:, s] = self.layer_types[i].d_activation(
                         activations[i][:, s] if
                         self.layer_types[i].use_activations
                         else ff_input + rec_input)

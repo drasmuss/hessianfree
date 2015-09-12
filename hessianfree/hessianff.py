@@ -63,8 +63,6 @@ class HessianFF(object):
             raise ValueError("Must specify a neuron type for each layer")
 
         self.layer_types = []
-        self.act = []
-        self.deriv = []
         for t in layer_types:
             if isinstance(t, str):
                 # look up the nonlinearity with the given name
@@ -72,15 +70,15 @@ class HessianFF(object):
             if not isinstance(t, nonlinearities.Nonlinearity):
                 raise TypeError("Layer type (%s) must be an instance of "
                                 "nonlinearities.Nonlinearity" % t)
-            self.act += [t.activation]
-            self.deriv += [t.d_activation]
             self.layer_types += [t]
 
         # check error type
         if error_type not in ["mse", "ce"]:
             raise ValueError("Unknown error type (%s)" % error_type)
         if (error_type == "ce" and
-            np.any(self.act[-1](np.linspace(-80, 80, 100)[None, :]) <= 0)):
+            np.any(self.layer_types[-1].activation(np.linspace(-80, 80,
+                                                               100)[None, :])
+                   <= 0)):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
                              " with cross-entropy error")
@@ -474,10 +472,10 @@ class HessianFF(object):
                     # note: we're applying a bias on each connection (rather
                     # than one for each neuron). just because it's easier than
                     # tracking how many connections there are for each layer.
-            activations[i] = self.act[i](inputs)
+            activations[i] = self.layer_types[i].activation(inputs)
 
             if deriv:
-                d_activations[i] = self.deriv[i](
+                d_activations[i] = self.layer_types[i].d_activation(
                     activations[i] if self.layer_types[i].use_activations
                     else inputs)
 
