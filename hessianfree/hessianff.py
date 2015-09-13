@@ -25,13 +25,13 @@ import nonlinearities
 
 
 class HessianFF(object):
-    def __init__(self, shape, layer_types=nonlinearities.Logistic(),
+    def __init__(self, shape, layers=nonlinearities.Logistic(),
                  conns=None, error_type="mse", W_init_params={},
                  use_GPU=False, load_weights=None, debug=False):
         """Initialize the parameters of the network.
 
         :param shape: list specifying the number of neurons in each layer
-        :param layer_types: nonlinearity (or list of nonlinearities) to use
+        :param layers: nonlinearity (or list of nonlinearities) to use
             in each layer
         :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
             specifying the connections between layers (default is to connect in
@@ -55,34 +55,34 @@ class HessianFF(object):
         self.targets = None
 
         # set up neural activation functions for each layer
-        if not isinstance(layer_types, (list, tuple)):
-            layer_types = [deepcopy(layer_types) for _ in range(self.n_layers)]
-            layer_types[0] = nonlinearities.Linear()
+        if not isinstance(layers, (list, tuple)):
+            layers = [deepcopy(layers) for _ in range(self.n_layers)]
+            layers[0] = nonlinearities.Linear()
 
-        if len(layer_types) != len(shape):
+        if len(layers) != len(shape):
             raise ValueError("Must specify a neuron type for each layer")
 
-        self.layer_types = []
-        for t in layer_types:
+        self.layers = []
+        for t in layers:
             if isinstance(t, str):
                 # look up the nonlinearity with the given name
                 t = getattr(nonlinearities, t)()
             if not isinstance(t, nonlinearities.Nonlinearity):
                 raise TypeError("Layer type (%s) must be an instance of "
                                 "nonlinearities.Nonlinearity" % t)
-            self.layer_types += [t]
+            self.layers += [t]
 
         # check error type
         if error_type not in ["mse", "ce"]:
             raise ValueError("Unknown error type (%s)" % error_type)
         if (error_type == "ce" and
-            np.any(self.layer_types[-1].activation(np.linspace(-80, 80,
+            np.any(self.layers[-1].activation(np.linspace(-80, 80,
                                                                100)[None, :])
                    <= 0)):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
                              " with cross-entropy error")
-        if error_type == "ce" and not isinstance(self.layer_types[-1],
+        if error_type == "ce" and not isinstance(self.layers[-1],
                                                  nonlinearities.Softmax):
             print "Softmax should probably be used with cross-entropy error"
         self.error_type = error_type
@@ -260,7 +260,6 @@ class HessianFF(object):
 
             # update damping parameter (compare improvement predicted by
             # quadratic model to the actual improvement in the error)
-            # TODO: use damping when calculating denom or not?
             denom = (0.5 * np.dot(delta, self.G(delta, damping=self.damping)) +
                      np.dot(grad, delta))
 
@@ -307,7 +306,7 @@ class HessianFF(object):
 
             # compute test error
             if test is None:
-                test_in, test_t = self.inputs, self.targets
+                test_in, test_t = inputs, targets
             else:
                 test_in, test_t = test[0], test[1]
 
@@ -472,11 +471,11 @@ class HessianFF(object):
                     # note: we're applying a bias on each connection (rather
                     # than one for each neuron). just because it's easier than
                     # tracking how many connections there are for each layer.
-            activations[i] = self.layer_types[i].activation(inputs)
+            activations[i] = self.layers[i].activation(inputs)
 
             if deriv:
-                d_activations[i] = self.layer_types[i].d_activation(
-                    activations[i] if self.layer_types[i].use_activations
+                d_activations[i] = self.layers[i].d_activation(
+                    activations[i] if self.layers[i].use_activations
                     else inputs)
 
         if deriv:
@@ -515,7 +514,7 @@ class HessianFF(object):
 
         return error
 
-    def J_dot(self, J, vec):
+    def J_dot(self, J, vec, transpose=False):
         """Compute the product of a Jacobian and some vector."""
 
         # In many cases the Jacobian is a diagonal matrix, so it is more
@@ -527,14 +526,15 @@ class HessianFF(object):
             # this is a diagonal representation
             return J * vec
         else:
+            if transpose:
+                J = np.transpose(J, (0, 2, 1))
             return np.einsum("ijk,ik->ij", J, vec)
-#             return np.einsum("ijk,ij->ik", J, vec)
 
     def calc_grad(self):
         """Compute parameter gradient."""
 
-        for l in self.layer_types:
-            if l.d_state is not None:
+        for l in self.layers:
+            if l.stateful:
                 raise TypeError("Cannot use neurons with internal state in "
                                 "a one-step feedforward network; use "
                                 "HessianRNN instead.")

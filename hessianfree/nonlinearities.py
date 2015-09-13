@@ -3,14 +3,14 @@ from scipy.special import expit
 
 
 class Nonlinearity(object):
-    def __init__(self, use_activations=True):
+    def __init__(self, use_activations=True, stateful=False):
         # use_activations denotes whether the d_activation function takes
         # activations as input or the same input as the activation function
         self.use_activations = use_activations
 
-        # the derivative of state_t+1 with respect to state_t (for
-        # nonlinearities that have state)
-        self.d_state = None
+        # True if this nonlinearity has internal state (in which case it
+        # also needs to define d_inputs and d_state)
+        self.stateful = stateful
 
     def activation(self, x):
         """Apply the nonlinearity to the inputs."""
@@ -75,7 +75,7 @@ class Softmax(Nonlinearity):
         return e
 
     def d_activation(self, a):
-        return a[..., None] * (np.eye(a.shape[-1]) - a[..., None, :])
+        return a[..., None, :] * (np.eye(a.shape[-1]) - a[..., None])
 
 
 class SoftLIF(Nonlinearity):
@@ -117,15 +117,16 @@ class SoftLIF(Nonlinearity):
 
 class Continuous(Nonlinearity):
     def __init__(self, base, tau=1.0, dt=1.0):
-        super(Continuous, self).__init__(use_activations=False)
+        super(Continuous, self).__init__(use_activations=False,
+                                         stateful=True)
         self.base = base
         self.coeff = dt / tau
 
-        # derivative of state with respect to previous state
-        self.d_state = np.diag(1 - self.coeff).astype(np.float32)
-
-        # derivative of state with respect to input
-        self.d_input = np.diag(self.coeff).astype(np.float32)
+#         # derivative of state with respect to previous state
+#         self.d_state = np.diag(1 - self.coeff).astype(np.float32)
+#
+#         # derivative of state with respect to input
+#         self.d_input = np.diag(self.coeff).astype(np.float32)
 
         self.reset()
 
@@ -138,8 +139,6 @@ class Continuous(Nonlinearity):
         return self.base.activation(self.state)
 
     def d_activation(self, x):
-        # derivative of output with respect to state
-
         self.d_act_count += 1
 
         # sanity check that state is in sync
@@ -150,9 +149,17 @@ class Continuous(Nonlinearity):
 
         act_d = self.base.d_activation(self.base.activation(self.state) if
                                        self.base.use_activations else
-                                       self.state)
+                                       self.state)[..., None]
 
-        return act_d
+        # TODO: fix this so it works if act_d returns matrices
+
+        d_input = np.resize(self.coeff,
+                            (x.shape[0], x.shape[1], 1))
+
+        d_state = np.resize(1 - self.coeff,
+                            (x.shape[0], x.shape[1], 1))
+
+        return np.concatenate((d_input, d_state, act_d), axis=-1)
 
     def reset(self):
         self.state = 0.0
