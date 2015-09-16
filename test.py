@@ -180,6 +180,30 @@ def test_softlif():
         print "target", t
         print "output", ff.forward(i, ff.W)[-1]
 
+def test_crossentropy():
+    """Example of a network using cross-entropy error."""
+
+    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
+                        dtype=np.float32)
+    targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
+
+    ff = HessianFF([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
+                   debug=True, error_type="ce")
+
+    ff.run_batches(inputs, targets, CG_iter=2, max_epochs=40,
+                   plotting=True)
+
+    # using gradient descent (for comparison)
+#     for i in range(10000):
+#         if i % 100 == 0:
+#             print "iteration", i
+#         ff.gradient_descent(inputs, targets, l_rate=1)
+
+    for i, t in zip(inputs, targets):
+        print "input", i
+        print "target", t
+        print "output", ff.forward(i, ff.W)[-1]
+
 
 def test_profile():
     """Run a profiler on the code (uses MNIST example)."""
@@ -247,7 +271,7 @@ def test_integrator():
     rnn = HessianRNN(shape=[1, 10, 10, 1], struc_damping=0.0,
                      layers=Logistic(), error_type="mse",
                      conns={0: [1, 2], 1: [2], 2: [3]},
-                     use_GPU=False, debug=True)
+                     use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
                     test=test, max_epochs=100, plotting=True)
@@ -291,7 +315,7 @@ def test_continuous():
 
     rnn = HessianRNN(shape=[1, 10, 1], struc_damping=0.0,
                      layers=[Linear(), nl, Logistic()], error_type="mse",
-                     use_GPU=False, debug=True)
+                     use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
                     test=test, max_epochs=100, plotting=True)
@@ -317,97 +341,11 @@ def test_continuous():
 
     plt.show()
 
-
 def test_plant():
-    """Example of a network using a dynamic plant to generate inputs."""
+    """Example of a network using a dynamic plant as the output layer."""
 
-    n_inputs = 15
-    sig_len = 30
-    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
-                      np.ones(sig_len))[:, :, None]
-    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
-                       np.linspace(0, 1, sig_len))[:, :, None]
-    inputs = inputs.astype(np.float32)
-    targets = targets.astype(np.float32)
-
-    class Plant:
-        def __init__(self, inputs, targets):
-            self.my_inputs = inputs
-            self.my_targets = targets
-
-            # self.shape should be [n_batches, signal_length, input_dim]
-            # TODO: allow flexible signal lengths?
-            self.shape = [n_inputs, sig_len, 2]
-            self.target_d = 1
-
-            self.count = 0
-            self.reset()
-
-        def __call__(self, x):
-            x = x.astype(np.float32)
-            inp = np.concatenate((self.my_inputs[:, self.count], x), axis=1)
-            tar = x + self.my_targets[:, self.count]
-#             inp = np.tile(self.my_inputs[:, self.count], (1, 2))
-#             tar = self.my_targets[:, self.count]
-
-            self.inputs = np.concatenate((self.inputs, inp[:, None, :]),
-                                         axis=1)
-            self.targets = np.concatenate((self.targets, tar[:, None, :]),
-                                          axis=1)
-            self.count += 1
-            return self.inputs[:, -1]
-
-        def get_inputs(self):
-            return self.inputs
-
-        def get_targets(self):
-            return self.targets
-
-        def reset(self):
-            assert self.count == 0 or self.count == self.shape[1]
-            self.count = 0
-            self.inputs = np.zeros((self.shape[0], 0, self.shape[2]),
-                                   dtype=np.float32)
-            self.targets = np.zeros((self.shape[0], 0, self.target_d),
-                                    dtype=np.float32)
-
-    plant = Plant(inputs, targets)
-
-    test = (plant, None)
-
-    rnn = HessianRNN(shape=[2, 10, 1], struc_damping=0.0,
-                     layers=Logistic(), error_type="mse",
-                     use_GPU=False, debug=False)
-
-    rnn.run_batches(plant, None, CG_iter=100, batch_size=None,
-                    test=test, max_epochs=30, plotting=True)
-
-    # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 10 == 0:
-#             print "iteration", i
-#         rnn.gradient_descent(plant, None, l_rate=0.1)
-
-    outputs = rnn.forward(inputs, rnn.W)[-1]
-
-    plt.figure()
-    plt.plot(plant.get_inputs()[:, :, 0].squeeze().T)
-    plt.plot(plant.get_inputs()[:, :, 1].squeeze().T)
-    plt.title("inputs")
-
-    plt.figure()
-    plt.plot(plant.get_targets().squeeze().T)
-    plt.title("targets")
-
-    plt.figure()
-    plt.plot(outputs.squeeze().T)
-    plt.title("outputs")
-
-    plt.show()
-
-def test_plant2():
     n_inputs = 1000
-    sig_len = 10
+    sig_len = 20
 
     class Plant(Nonlinearity):
         def __init__(self, A, B, targets, init_state):
@@ -420,6 +358,12 @@ def test_plant2():
             self.init_state = init_state
 
             self.shape = [n_inputs, sig_len, len(A)]
+
+            # derivative of output with respect to state (constant, so just
+            # compute it once here)
+            self.d_output = np.resize(np.eye(self.shape[-1]),
+                                      (n_inputs, self.shape[-1],
+                                       self.shape[-1], 1))
 
             self.reset()
 
@@ -449,13 +393,7 @@ def test_plant2():
             d_state[:, 1, 0] += x[:, 1] * self.d_B_matrix[:, 1, 1]
             d_state = d_state[..., None]
 
-            # derivative of output with respect to state
-            # TODO: move this to constructor
-            d_output = np.resize(np.eye(self.shape[-1]),
-                                 (x.shape[0], self.shape[-1], self.shape[-1],
-                                  1))
-
-            return np.concatenate((d_input, d_state, d_output), axis=-1)
+            return np.concatenate((d_input, d_state, self.d_output), axis=-1)
 
         def __call__(self, x):
             self.inputs = np.concatenate((self.inputs, self.state[:, None, :]),
@@ -472,6 +410,11 @@ def test_plant2():
             self.act_count = 0
             self.d_act_count = 0
             self.state = self.init_state.copy()
+            # TODO: get it to work with stochastic plants (need to keep the
+            # initialization stable for calc_J)
+#             self.state = self.init_state[
+#                 np.random.choice(np.arange(len(self.init_state)),
+#                                  size=self.shape[0], replace=False)]
             self.inputs = np.zeros((self.shape[0], 0, self.shape[-1]),
                                    dtype=np.float32)
             self.B_matrix = self.d_B_matrix = None
@@ -482,8 +425,6 @@ def test_plant2():
 
     A = [[1, 0],
          [0.2, 1]]
-#     B = [[0, 0],
-#          [0, 1]]
 
     def B(state):
         B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
@@ -499,13 +440,14 @@ def test_plant2():
 
     plant = Plant(A, B, targets, init1)
 
+    # TODO: why is the test generalization so bad?
     test = None  # (Plant(A, B, targets, init2), None)
 
-    rnn = HessianRNN(shape=[2, 2, 2], struc_damping=0.0,
-                     layers=[Linear(), Tanh(), plant],
-                     error_type="mse", debug=True,
-                     rec_layers=[False, False, False],
-                     conns={0:[1], 1:[2]},
+    rnn = HessianRNN(shape=[2, 10, 10, 2], struc_damping=0.0,
+                     layers=[Linear(), Tanh(), Tanh(), plant],
+                     error_type="mse", debug=False,
+                     rec_layers=[False, True, True, False],
+                     conns={0:[1, 2], 1:[2], 2:[3]},
                      W_init_params={"coeff": 0.01},
                      W_rec_params={"coeff": 0.01})
 

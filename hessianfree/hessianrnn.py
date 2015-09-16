@@ -175,12 +175,8 @@ class HessianRNN(HessianFF):
             for l in range(self.n_layers - 1, -1, -1):
                 if l == self.n_layers - 1:
                     # derivative of loss
-                    if self.error_type == "mse":
-                        error = np.nan_to_num(self.activations[-1][:, s] -
-                                              self.targets[:, s])
-                    elif self.error_type == "ce":
-                        error = (-np.nan_to_num(self.targets[:, s]) /
-                                 self.activations[-1][:, s])
+                    error = self.loss[1](self.activations[-1][:, s],
+                                         self.targets[:, s])
                 else:
                     # error from feedforward weights
                     error = np.zeros_like(deltas[l])
@@ -237,7 +233,7 @@ class HessianRNN(HessianFF):
 
         return grad
 
-    def G(self, v, damping=0, output=None):
+    def calc_G(self, v, damping=0, output=None):
         """Compute Gauss-Newton matrix-vector product."""
 
         if output is None:
@@ -296,20 +292,10 @@ class HessianRNN(HessianFF):
                     R_states[l] += self.J_dot(d_input, R_inputs[l][:, s])
                     R_activations[l] = self.J_dot(d_output, R_states[l])
 
+
             # copy output activations so we can reuse to compute error in
             # backwards pass
             R_outputs[:, s] = R_activations[-1]
-
-        if self.debug:
-            J = self.calc_J()
-            Jv = np.dot(J, v)
-            try:
-                assert np.allclose(Jv, R_outputs, rtol=1e-3)
-            except AssertionError:
-                print "Jv failed"
-                print R_outputs[0]
-                print Jv[0]
-                print R_outputs[0] / Jv[0]
 
         # R backward pass
         R_deltas = [np.zeros((self.inputs.shape[0], l), dtype=self.dtype)
@@ -322,12 +308,9 @@ class HessianRNN(HessianFF):
             for l in np.arange(self.n_layers - 1, -1, -1):
                 if l == self.n_layers - 1:
                     # output layer
-                    if self.error_type == "mse":
-                        R_error = R_outputs[:, s]
-                    elif self.error_type == "ce":
-                        R_error = (R_outputs[:, s] *
-                                   np.nan_to_num(self.targets[:, s]) /
-                                   self.activations[l][:, s] ** 2)
+                    R_error = (R_outputs[:, s] *
+                               self.loss[2](self.activations[l][:, s],
+                                            self.targets[:, s]))
                 else:
                     # error from feedforward connections
                     R_error = np.zeros_like(self.activations[l][:, s])
@@ -366,7 +349,7 @@ class HessianRNN(HessianFF):
                     R_deltas[l] = self.J_dot(d_input, R_states[l],
                                              transpose=True)
                     R_states[l] = self.J_dot(d_state, R_states[l],
-                                             transpose=False)
+                                             transpose=True)
 
                 # apply structural damping
                 # TODO: fix this to work with stateful nonlinearities (should
@@ -392,61 +375,3 @@ class HessianRNN(HessianFF):
         Gv += damping * v  # Tikhonov damping
 
         return Gv
-
-    def check_G(self, calc_G, v, damping=0):
-        """Check Gv calculation via finite differences (for debugging)."""
-
-        # TODO: get struc_damping check to work
-        assert self.struc_damping == 0
-
-        eps = 1e-6
-        N = self.W.size
-        sig_len = self.inputs.shape[1]
-        output_d = self.targets.shape[2]
-
-        Gv = np.zeros(N)
-
-        for b in range(self.inputs.shape[0]):
-            base = self.forward(self.inputs[b], self.W)[-1].squeeze(axis=0)
-
-            # compute the Jacobian
-            J = np.zeros((sig_len, output_d, N))
-            for i in range(N):
-                inc_i = np.zeros(N)
-                inc_i[i] = eps
-
-                acts = self.forward(self.inputs[b],
-                                    self.W + inc_i)[-1].squeeze(axis=0)
-                J[:, :, i] = (acts - base) / eps
-
-            # second derivative of loss function
-            L = np.zeros((sig_len, output_d, output_d))
-            if self.error_type == "mse":
-                L[:] = np.eye(output_d)
-            elif self.error_type == "ce":
-                for i in range(sig_len):
-                    L[i] = np.diag(self.targets[b][i] / base[i] ** 2)
-
-            G = np.zeros((N, N))
-            # sum over the signal
-            for i in range(sig_len):
-                G += np.dot(J[i].T, np.dot(L[i], J[i]))
-
-            Gv += np.dot(G, v)
-
-        Gv /= self.inputs.shape[0]
-
-        Gv += damping * v
-
-        try:
-            assert np.allclose(Gv, calc_G, rtol=1e-3)
-        except AssertionError:
-            print "calc_G"
-            print calc_G
-            print "finite G"
-            print Gv
-            print "calc_G - finite G"
-            print calc_G - Gv
-            print "calc_G / finite G"
-            print calc_G / Gv
-            raise

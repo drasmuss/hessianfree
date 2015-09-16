@@ -36,7 +36,7 @@ class HessianFF(object):
         :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
             specifying the connections between layers (default is to connect in
             series)
-        :param error_type: type of loss function (mse or ce)
+        :param error_type: type of loss function (mse, ce, or custom)
         :param W_init_params: parameter dict passed to init_weights (see
             parameter descriptions in that function)
         :param use_GPU: run certain operations on GPU to speed them up
@@ -54,7 +54,7 @@ class HessianFF(object):
         self.inputs = None
         self.targets = None
 
-        # set up neural activation functions for each layer
+        # initialize layer nonlinearities
         if not isinstance(layers, (list, tuple)):
             layers = [deepcopy(layers) for _ in range(self.n_layers)]
             layers[0] = nonlinearities.Linear()
@@ -72,22 +72,10 @@ class HessianFF(object):
                                 "nonlinearities.Nonlinearity" % t)
             self.layers += [t]
 
-        # check error type
-        if error_type not in ["mse", "ce"]:
-            raise ValueError("Unknown error type (%s)" % error_type)
-        if (error_type == "ce" and
-            np.any(self.layers[-1].activation(np.linspace(-80, 80,
-                                                               100)[None, :])
-                   <= 0)):
-            # this won't catch everything, but hopefully a useful warning
-            raise ValueError("Must use positive activation function"
-                             " with cross-entropy error")
-        if error_type == "ce" and not isinstance(self.layers[-1],
-                                                 nonlinearities.Softmax):
-            print "Softmax should probably be used with cross-entropy error"
-        self.error_type = error_type
+        # initialize loss function
+        self.init_loss(error_type)
 
-        # add connections
+        # initialize connections
         if conns is None:
             # set up the feedforward series connections
             conns = {}
@@ -110,6 +98,7 @@ class HessianFF(object):
                     raise ValueError("Can only connect from lower to higher "
                                      " layers (%s >= %s)" % (pre, post))
 
+        # initialize connection weights
         if load_weights is not None:
             if isinstance(load_weights, np.ndarray):
                 self.W = load_weights
@@ -127,6 +116,7 @@ class HessianFF(object):
 
         self.compute_offsets()
 
+        # initialize GPU
         if use_GPU:
             self.init_GPU()
         else:
@@ -260,7 +250,7 @@ class HessianFF(object):
 
             # update damping parameter (compare improvement predicted by
             # quadratic model to the actual improvement in the error)
-            denom = (0.5 * np.dot(delta, self.G(delta, damping=self.damping)) +
+            denom = (0.5 * np.dot(delta, self.calc_G(delta, damping=self.damping)) +
                      np.dot(grad, delta))
 
             improvement_ratio = (new_err - err) / denom if denom != 0 else 1
@@ -500,17 +490,13 @@ class HessianFF(object):
 
         # note: np.nan can be used in the target to specify places
         # where the target is not defined. those get translated to
-        # zero error here.
+        # zero error in the loss function.
 
         # we don't want to confuse nan outputs with nan targets
         assert np.all(np.isfinite(outputs))
 
-        if self.error_type == "mse":
-            error = np.sum(np.nan_to_num(outputs - targets) ** 2)
-            error /= 2 * len(inputs)
-        elif self.error_type == "ce":
-            error = -np.sum(np.nan_to_num(targets) * np.log(outputs))
-            error /= len(inputs)
+        error = self.loss[0](outputs, targets)
+        error = np.sum(error) / len(outputs)
 
         return error
 
@@ -545,13 +531,9 @@ class HessianFF(object):
         # pass has already been run elsewhere
 
         # backpropagate error
+        error = self.loss[1](self.activations[-1], self.targets)
+
         deltas = [None for _ in range(self.n_layers)]
-
-        if self.error_type == "mse":
-            error = np.nan_to_num(self.activations[-1] - self.targets)
-        elif self.error_type == "ce":
-            error = -np.nan_to_num(self.targets) / self.activations[-1]
-
         deltas[-1] = self.J_dot(self.d_activations[-1], error)
 
         for i in range(self.n_layers - 2, -1, -1):
@@ -588,7 +570,7 @@ class HessianFF(object):
             error_dec = self.error(dec_W, self.inputs, self.targets)
             grad[i] = (error_inc - error_dec) / (2 * eps)
         try:
-            assert np.allclose(grad, calc_grad, rtol=1e-3)
+            assert np.allclose(calc_grad, grad, rtol=1e-3)
         except AssertionError:
             print "calc_grad"
             print calc_grad
@@ -600,7 +582,7 @@ class HessianFF(object):
             print calc_grad / grad
             print "W"
             print self.W
-            raise
+            pause = raw_input("Paused (press enter to continue)")
 
     def gradient_descent(self, inputs, targets, l_rate=1):
         """Basic first-order gradient descent (for comparison)."""
@@ -626,7 +608,7 @@ class HessianFF(object):
         # update weights
         self.W -= l_rate * grad
 
-    def G(self, v, damping=0, output=None):
+    def calc_G(self, v, damping=0, output=None):
         """Compute Gauss-Newton matrix-vector product."""
 
         if output is None:
@@ -650,12 +632,9 @@ class HessianFF(object):
         # backward pass
         R_deltas = [None for _ in range(self.n_layers)]
 
-        if self.error_type == "mse":
-            # second derivative of error function is 1
-            R_error = R_activations[-1]
-        elif self.error_type == "ce":
-            R_error = (R_activations[-1] *
-                       np.nan_to_num(self.targets) / self.activations[-1] ** 2)
+        # multiply by second derivative of loss function
+        R_error = R_activations[-1] * self.loss[2](self.activations[-1],
+                                                   self.targets)
 
         R_deltas[-1] = self.J_dot(self.d_activations[-1], R_error)
 
@@ -679,43 +658,65 @@ class HessianFF(object):
 
         return Gv
 
-    def check_G(self, calc_G, v, damping=0):
-        """Check Gv calculation via finite differences (for debugging)."""
+    def calc_J(self):
+        """Compute the Jacobian of the network via finite differences."""
 
         eps = 1e-6
         N = self.W.size
 
-        g = np.zeros(N)
-        for n, input in enumerate(self.inputs):
-            base = self.forward(input, self.W)[-1]
+        # compute the Jacobian
+        J = None
+        for i in range(N):
+            inc_i = np.zeros(N)
+            inc_i[i] = eps
 
-            J = np.zeros((base.size, N))
-            for i in range(N):
-                inc_i = np.zeros(N)
-                inc_i[i] = eps
+            inc = self.forward(self.inputs,
+                               self.W + inc_i)[-1]
+            dec = self.forward(self.inputs,
+                               self.W - inc_i)[-1]
+            J_i = (inc - dec) / (2 * eps)
+            if J is None:
+                J = J_i[..., None]
+            else:
+                J = np.concatenate((J, J_i[..., None]), axis=-1)
 
-                J[:, i] = (self.forward(input, self.W + inc_i)[-1] -
-                           base) / eps
+        return J
 
-            if self.error_type == "mse":
-                L = np.eye(base.size)
-            elif self.error_type == "ce":
-                L = np.diag((self.targets[n] / base ** 2).squeeze())
+    def check_G(self, calc_G, v, damping=0):
+        """Check Gv calculation via finite differences (for debugging)."""
 
-            g += np.dot(np.dot(J.T, np.dot(L, J)), v)
+        Gv = np.zeros_like(self.W)
 
-        g /= self.inputs.shape[0]
+        # compute Jacobian
+        J = self.calc_J()
 
-        g += damping * v
+        # second derivative of loss function
+        L = self.loss[2](self.forward(self.inputs, self.W)[-1], self.targets)
+        # TODO: check self.loss[2] via finite differences
+
+        G = np.einsum("...ji,...j,...jk->...ik", J, L, J)
+        G = np.sum(G, axis=tuple(range(J.ndim - 2)))
+        # note: the generic indexing is necessary for compatibility between
+        # hessianff and hessianrnn
+
+        # divide by batch size
+        G /= self.inputs.shape[0]
+
+        Gv = np.dot(G, v)
+        Gv += damping * v
 
         try:
-            assert np.allclose(g, calc_G, rtol=1e-3)
+            assert np.allclose(calc_G, Gv, rtol=1e-3)
         except AssertionError:
-            print g
+            print "calc_G"
             print calc_G
-            print calc_G - g
-            print calc_G / g
-            raise
+            print "finite G"
+            print Gv
+            print "calc_G - finite G"
+            print calc_G - Gv
+            print "calc_G / finite G"
+            print calc_G / Gv
+            pause = raw_input("Paused (press enter to continue)")
 
     def conjugate_gradient(self, init_delta, grad, iters=250):
         """Compute weight update using conjugate gradient algorithm."""
@@ -728,7 +729,7 @@ class HessianFF(object):
 
         base_grad = -grad
         delta = init_delta
-        residual = base_grad - self.G(init_delta, damping=self.damping)
+        residual = base_grad - self.calc_G(init_delta, damping=self.damping)
         res_norm = np.dot(residual, residual)
         direction = residual.copy()
 
@@ -742,7 +743,7 @@ class HessianFF(object):
                 print "delta norm", np.linalg.norm(delta)
                 print "direction norm", np.linalg.norm(direction)
 
-            self.G(direction, damping=self.damping, output=G_dir)
+            self.calc_G(direction, damping=self.damping, output=G_dir)
 
             # calculate step size
             step = res_norm / np.dot(direction, G_dir)
@@ -756,7 +757,7 @@ class HessianFF(object):
                 assert step >= 0
                 assert (np.linalg.norm(np.dot(direction, G_dir)) >=
                         np.linalg.norm(np.dot(direction,
-                                              self.G(direction, damping=0))))
+                                              self.calc_G(direction, damping=0))))
 
             # update weight delta
             delta += step * direction
@@ -798,6 +799,44 @@ class HessianFF(object):
         deltas += [(i, np.copy(delta))]
 
         return deltas
+
+    def init_loss(self, loss_type):
+        # sanity checks
+        if (loss_type == "ce" and
+            np.any(self.layers[-1].activation(np.linspace(-80, 80,
+                                                               100)[None, :])
+                   <= 0)):
+            # this won't catch everything, but hopefully a useful warning
+            raise ValueError("Must use positive activation function"
+                             " with cross-entropy error")
+        if loss_type == "ce" and not isinstance(self.layers[-1],
+                                                 nonlinearities.Softmax):
+            print "Softmax should probably be used with cross-entropy error"
+
+        # create functions for loss function and first/second derivative
+        if loss_type == "mse":
+            def loss(outputs, targets):
+                return np.sum(np.nan_to_num(outputs - targets) ** 2,
+                               axis=tuple(range(1, outputs.ndim))) / 2
+            def d_loss(outputs, targets):
+                return np.nan_to_num(outputs - targets)
+            def d2_loss(outputs, targets):
+                return np.ones_like(outputs)
+        elif loss_type == "ce":
+            def loss(outputs, targets):
+                return -np.sum(np.nan_to_num(targets) * np.log(outputs),
+                               axis=tuple(range(1, outputs.ndim)))
+            def d_loss(outputs, targets):
+                return -np.nan_to_num(targets) / outputs
+            def d2_loss(outputs, targets):
+                return np.nan_to_num(targets) / outputs ** 2
+        elif isinstance(loss_type, (list, tuple)):
+            # user specified loss function
+            loss, d_loss, d2_loss = loss_type
+        else:
+            raise ValueError("Unknown error type (%s)" % loss_type)
+
+        self.loss = (loss, d_loss, d2_loss)
 
     def init_GPU(self):
         dev = pycuda.autoinit.device
