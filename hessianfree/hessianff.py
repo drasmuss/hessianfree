@@ -580,9 +580,7 @@ class HessianFF(object):
             print calc_grad - grad
             print "calc_grad / finite grad"
             print calc_grad / grad
-            print "W"
-            print self.W
-            pause = raw_input("Paused (press enter to continue)")
+            raw_input("Paused (press enter to continue)")
 
     def gradient_descent(self, inputs, targets, l_rate=1):
         """Basic first-order gradient descent (for comparison)."""
@@ -685,13 +683,11 @@ class HessianFF(object):
     def check_G(self, calc_G, v, damping=0):
         """Check Gv calculation via finite differences (for debugging)."""
 
-        Gv = np.zeros_like(self.W)
-
         # compute Jacobian
         J = self.calc_J()
 
         # second derivative of loss function
-        L = self.loss[2](self.forward(self.inputs, self.W)[-1], self.targets)
+        L = self.loss[2](self.activations[-1], self.targets)
         # TODO: check self.loss[2] via finite differences
 
         G = np.einsum("...ji,...j,...jk->...ik", J, L, J)
@@ -716,7 +712,7 @@ class HessianFF(object):
             print calc_G - Gv
             print "calc_G / finite G"
             print calc_G / Gv
-            pause = raw_input("Paused (press enter to continue)")
+            raw_input("Paused (press enter to continue)")
 
     def conjugate_gradient(self, init_delta, grad, iters=250):
         """Compute weight update using conjugate gradient algorithm."""
@@ -757,7 +753,8 @@ class HessianFF(object):
                 assert step >= 0
                 assert (np.linalg.norm(np.dot(direction, G_dir)) >=
                         np.linalg.norm(np.dot(direction,
-                                              self.calc_G(direction, damping=0))))
+                                              self.calc_G(direction,
+                                                          damping=0))))
 
             # update weight delta
             delta += step * direction
@@ -804,7 +801,7 @@ class HessianFF(object):
         # sanity checks
         if (loss_type == "ce" and
             np.any(self.layers[-1].activation(np.linspace(-80, 80,
-                                                               100)[None, :])
+                                                          100)[None, :])
                    <= 0)):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
@@ -818,16 +815,20 @@ class HessianFF(object):
             def loss(outputs, targets):
                 return np.sum(np.nan_to_num(outputs - targets) ** 2,
                                axis=tuple(range(1, outputs.ndim))) / 2
+
             def d_loss(outputs, targets):
                 return np.nan_to_num(outputs - targets)
+
             def d2_loss(outputs, targets):
                 return np.ones_like(outputs)
         elif loss_type == "ce":
             def loss(outputs, targets):
                 return -np.sum(np.nan_to_num(targets) * np.log(outputs),
                                axis=tuple(range(1, outputs.ndim)))
+
             def d_loss(outputs, targets):
                 return -np.nan_to_num(targets) / outputs
+
             def d2_loss(outputs, targets):
                 return np.nan_to_num(targets) / outputs ** 2
         elif isinstance(loss_type, (list, tuple)):
@@ -922,8 +923,7 @@ class HessianFF(object):
             # load data onto gpu (if it isn't there already)
             a_gpu = (a if isinstance(a, gpuarray.GPUArray) else drv.In(a))
             b_gpu = (b if isinstance(b, gpuarray.GPUArray) else drv.In(b))
-            out_gpu = (out if isinstance(out, gpuarray.GPUArray) else
-                       drv.Out(out))
+            out_gpu = drv.Out(out)
 
             # execute function
             gpu_outer = mod.get_function("outer_sum")

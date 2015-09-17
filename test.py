@@ -180,6 +180,7 @@ def test_softlif():
         print "target", t
         print "output", ff.forward(i, ff.W)[-1]
 
+
 def test_crossentropy():
     """Example of a network using cross-entropy error."""
 
@@ -340,6 +341,7 @@ def test_continuous():
     plt.title("outputs")
 
     plt.show()
+
 
 def test_plant():
     """Example of a network using a dynamic plant as the output layer."""
