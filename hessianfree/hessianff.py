@@ -413,6 +413,8 @@ class HessianFF(object):
                     offset + n_params)
                 offset += n_params
 
+        return offset
+
     def get_weights(self, params, conn, separate=True):
         """Get weight matrix for a connection from overall parameter vector."""
 

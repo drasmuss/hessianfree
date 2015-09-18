@@ -52,10 +52,10 @@ class HessianRNN(HessianFF):
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
 
-        super(HessianRNN, self).compute_offsets()
+        ff_offset = super(HessianRNN, self).compute_offsets()
 
-        # add in offsets for recurrent weights
-        offset = len(self.W)  # note: gets called before rec_W added
+        # offset for recurrent weights is end of ff weights
+        offset = ff_offset
         for l in range(self.n_layers):
             if self.rec_layers[l]:
                 self.offsets[(l, l)] = (
@@ -63,6 +63,8 @@ class HessianRNN(HessianFF):
                     offset + self.shape[l] * self.shape[l],
                     offset + (self.shape[l] + 1) * self.shape[l])
                 offset += (self.shape[l] + 1) * self.shape[l]
+
+        return offset - ff_offset
 
     def forward(self, input, params, deriv=False):
         """Compute activations for given input sequence and parameters.
