@@ -51,6 +51,11 @@ class HessianFF(object):
         self.n_layers = len(shape)
         self.dtype = np.float64 if debug else np.float32
 
+        self.epoch = None
+        # note: this isn't used internally, it is just there so that an
+        # external process with a handle to this object can tell what epoch
+        # it is on
+
         self.inputs = None
         self.targets = None
 
@@ -176,6 +181,8 @@ class HessianFF(object):
                 pickle.dump(plots, f)
 
         for i in range(max_epochs):
+            self.epoch = i
+
             if i % print_period == 0:
                 print "=" * 40
                 print "batch", i
@@ -326,19 +333,16 @@ class HessianFF(object):
                           "wb") as f:
                     pickle.dump(plots, f)
 
-            # dump weights
-#             if i % print_period == 0 and file_output is not None:
-#                 np.save("%s_weights.npy" % file_output, self.W)
-
             # check for termination
             if test_errs[-1] < target_err:
                 print "target error reached"
                 break
-            if i > 20 and test_errs[-10] < test_errs[-1]:
+            if test is not None and i > 20 and test_errs[-10] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break
 
         self.W[:] = best_W
+#         np.save("%s_weights.npy" % file_output, self.W)
 
     def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
         """Weight initialization, given shapes of weight matrices.

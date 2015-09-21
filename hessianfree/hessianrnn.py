@@ -14,7 +14,7 @@ from hessianff import HessianFF
 
 
 class HessianRNN(HessianFF):
-    def __init__(self, shape, struc_damping=0.0, rec_layers=None,
+    def __init__(self, shape, struc_damping=None, rec_layers=None,
                  W_rec_params={}, **kwargs):
         """Initialize the parameters of the network.
 
@@ -345,7 +345,7 @@ class HessianRNN(HessianFF):
                                              transpose=True)
 
                 # apply structural damping
-                if self.rec_layers[l]:
+                if self.struc_damping is not None and self.rec_layers[l]:
                     # penalize change in the output w.r.t. input (which is what
                     # R_activations represents)
                     R_deltas[l] += (damping * self.struc_damping *

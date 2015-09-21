@@ -58,6 +58,18 @@ class ReLU(Nonlinearity):
         self.d_activation = lambda a: a > 0
 
 
+class Gaussian(Nonlinearity):
+    def __init__(self):
+        super(Gaussian, self).__init__(use_activations=False)
+
+    def activation(self, x):
+        return np.exp(-x ** 2)
+
+    def d_activation(self, x):
+        a = self.activation(x)
+        return -2 * a * x
+
+
 class Softmax(Nonlinearity):
     def __init__(self):
         super(Softmax, self).__init__()

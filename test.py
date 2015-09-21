@@ -9,7 +9,8 @@ from hessianfree.hessianff import HessianFF
 from hessianfree.hessianrnn import HessianRNN
 
 from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
-                                        Continuous, Linear, Nonlinearity)
+                                        Continuous, Linear, Nonlinearity,
+                                        Gaussian)
 
 
 def test_xor():
