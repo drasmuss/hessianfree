@@ -187,33 +187,12 @@ class HessianFF(object):
                 print "=" * 40
                 print "batch", i
 
-            # generate inputs/targets for this batch
-            if plant is None:
-                if batch_size is None:
-                    # use everything
-                    self.inputs = inputs
-                    self.targets = targets
-                else:
-                    # generate mini-batch
-                    indices = np.random.choice(np.arange(len(inputs)),
-                                               size=batch_size, replace=False)
-                    self.inputs = inputs[indices]
-                    self.targets = targets[indices]
-            else:
-                # run plant to generate batch
-                if batch_size is not None:
-                    plant.shape[0] = batch_size
-                self.forward(plant, self.W)
-                self.inputs = plant.get_inputs().astype(np.float32)
-                self.targets = plant.get_targets().astype(np.float32)
+            # generate minibatch and cache activations
+            self.cache_minibatch(inputs, targets, batch_size)
 
             if not(self.inputs.dtype == self.targets.dtype == np.float32):
                 raise TypeError("Input type must be np.float32")
 
-            # cache activations
-            self.activations, self.d_activations = self.forward(self.inputs,
-                                                                self.W,
-                                                                deriv=True)
             if self.use_GPU:
                 self.GPU_activations = [gpuarray.to_gpu(a)
                                         for a in self.activations]
@@ -257,7 +236,8 @@ class HessianFF(object):
 
             # update damping parameter (compare improvement predicted by
             # quadratic model to the actual improvement in the error)
-            denom = (0.5 * np.dot(delta, self.calc_G(delta, damping=self.damping)) +
+            denom = (0.5 * np.dot(delta,
+                                  self.calc_G(delta, damping=self.damping)) +
                      np.dot(grad, delta))
 
             improvement_ratio = (new_err - err) / denom if denom != 0 else 1
@@ -400,6 +380,35 @@ class HessianFF(object):
 
         return W
 
+    def cache_minibatch(self, inputs, targets, batch_size=None):
+        """Pick a subset of inputs and targets to use in minibatch, and cache
+        the activations for that minibatch."""
+
+        batch_size = inputs.shape[0] if batch_size is None else batch_size
+
+        if not callable(inputs):
+            # inputs/targets are vectors, select a subset
+            indices = np.random.choice(np.arange(len(inputs)),
+                                       size=batch_size, replace=False)
+            self.inputs = inputs[indices]
+            self.targets = targets[indices]
+
+            # cache activations
+            self.activations, self.d_activations = self.forward(inputs, self.W,
+                                                                deriv=True)
+        else:
+            if targets is not None:
+                raise ValueError("Cannot specify targets when using dynamic "
+                                 "plant to generate inputs (plant should "
+                                 "generate targets itself)")
+
+            # run plant to generate batch
+            inputs.shape[0] = batch_size
+            self.activations, self.d_activations = self.forward(inputs, self.W,
+                                                                deriv=True)
+            self.inputs = inputs.get_inputs().astype(np.float32)
+            self.targets = inputs.get_targets().astype(np.float32)
+
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
 
@@ -496,11 +505,6 @@ class HessianFF(object):
 
         # get targets
         if callable(inputs):
-            if targets is not None:
-                raise ValueError("Cannot specify targets when using dynamic "
-                                 "plant to generate inputs (plant should "
-                                 "generate targets itself)")
-
             # get targets from plant
             targets = inputs.get_targets()
         else:
@@ -600,29 +604,93 @@ class HessianFF(object):
             print calc_grad / grad
             raw_input("Paused (press enter to continue)")
 
-    def gradient_descent(self, inputs, targets, l_rate=1):
+    def gradient_descent(self, inputs, targets, l_rate=1, batch_size=None,
+                         max_epochs=10000, test=None, target_err=1e-6,
+                         plotting=False, test_err=None, file_output=None):
         """Basic first-order gradient descent (for comparison)."""
 
-        self.activations, self.d_activations = self.forward(inputs,
-                                                            self.W,
-                                                            deriv=True)
+        if self.debug:
+            print_period = 1
+        else:
+            print_period = 100
+
+        test_errs = []
+        best_W = None
+        best_error = None
         self.GPU_activations = None
 
-        if callable(inputs):
-            self.inputs = inputs.get_inputs()
-            self.targets = inputs.get_targets()
-        else:
-            self.inputs = inputs
-            self.targets = targets
+        if plotting:
+            # data is dumped out to file so that the plots can be
+            # displayed/updated in parallel (see dataplotter.py)
+            plots = {}
+            plot_vars = ["new_err", "test_errs[-1]"]
+            for v in plot_vars:
+                plots[v] = []
 
-        # compute gradient
-        grad = self.calc_grad()
+            with open("%s_plots.pkl" % (file_output
+                                        if file_output is not None
+                                        else "SGD"),
+                      "wb") as f:
+                pickle.dump(plots, f)
 
-        if self.debug:
-            self.check_grad(grad)
+        for i in range(max_epochs):
+            self.epoch = i
+            self.cache_minibatch(inputs, targets, batch_size)
 
-        # update weights
-        self.W -= l_rate * grad
+            if i % print_period == 0:
+                print "step", i
+
+                new_err = self.error()
+                print "training error", new_err
+
+                # compute test error
+                if test is None:
+                    test_in, test_t = inputs, targets
+                else:
+                    test_in, test_t = test[0], test[1]
+
+                if test_err is None:
+                    err = self.error(self.W, test_in, test_t)
+                else:
+                    output = self.forward(test_in, self.W)[-1]
+                    err = test_err(output, test_t)
+                test_errs += [err]
+
+                print "test error", test_errs[-1]
+
+                # save the weights with the best error
+                if best_W is None or test_errs[-1] < best_error:
+                    best_W = self.W.copy()
+                    best_error = test_errs[-1]
+
+                # dump plot data
+                if plotting:
+                    for v in plot_vars:
+                        plots[v] += [eval(v)]
+
+                    with open("%s_plots.pkl" % (file_output
+                                                if file_output is not None
+                                                else "SGD"),
+                              "wb") as f:
+                        pickle.dump(plots, f)
+
+                # check for termination
+                if test_errs[-1] < target_err:
+                    print "target error reached"
+                    break
+                if (test is not None and i > 100 and
+                        test_errs[-100] < test_errs[-1]):
+                    print "overfitting detected, terminating"
+                    break
+
+            # compute gradient
+            grad = self.calc_grad()
+
+            if self.debug:
+                self.check_grad(grad)
+
+            # update weights
+            self.W -= l_rate * grad
 
     def calc_G(self, v, damping=0, output=None):
         """Compute Gauss-Newton matrix-vector product."""
