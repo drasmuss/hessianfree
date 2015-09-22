@@ -102,6 +102,7 @@ class HessianRNN(HessianFF):
                     if callable(input):
                         # call the plant with the output of the previous
                         # timestep to generate the next input
+                        # note: this will pass zeros on the first timestep
                         ff_input = input(activations[-1][:, s - 1])
                     else:
                         ff_input = input[:, s]
@@ -142,20 +143,6 @@ class HessianRNN(HessianFF):
             return activations, d_activations
 
         return activations
-
-    def error(self, W=None, inputs=None, targets=None):
-        """Compute network error."""
-
-        if callable(inputs):
-            assert targets is None
-
-            # run plant to get inputs/targets
-            W = self.W if W is None else W
-            self.forward(inputs, W)
-            targets = inputs.get_targets()
-            inputs = inputs.get_inputs()
-
-        return super(HessianRNN, self).error(W, inputs, targets)
 
     def calc_grad(self):
         """Compute parameter gradient."""

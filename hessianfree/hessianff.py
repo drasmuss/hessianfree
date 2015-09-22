@@ -444,10 +444,8 @@ class HessianFF(object):
         """
 
         if callable(input):
-            raise TypeError("Cannot use a dynamic plant with a one-step "
-                            "feedforward network; use HessianRNN instead.")
-
-        if input.ndim < 2:
+            input.reset()
+        elif input.ndim < 2:
             # then we've just been given a single sample (rather than batch)
             input = input[None, :]
 
@@ -457,7 +455,10 @@ class HessianFF(object):
 
         for i in range(self.n_layers):
             if i == 0:
-                inputs = input
+                if callable(input):
+                    inputs = input(None)
+                else:
+                    inputs = input
             else:
                 inputs = np.zeros((input.shape[0], self.shape[i]),
                                   dtype=self.dtype)
@@ -483,8 +484,8 @@ class HessianFF(object):
 
         W = self.W if W is None else W
         inputs = self.inputs if inputs is None else inputs
-        targets = self.targets if targets is None else targets
 
+        # get outputs
         if (W is self.W and inputs is self.inputs and
                 self.activations is not None):
             # use cached activations
@@ -492,6 +493,18 @@ class HessianFF(object):
         else:
             # compute activations
             outputs = self.forward(inputs, W)[-1]
+
+        # get targets
+        if callable(inputs):
+            if targets is not None:
+                raise ValueError("Cannot specify targets when using dynamic "
+                                 "plant to generate inputs (plant should "
+                                 "generate targets itself)")
+
+            # get targets from plant
+            targets = inputs.get_targets()
+        else:
+            targets = self.targets if targets is None else targets
 
         # note: np.nan can be used in the target to specify places
         # where the target is not defined. those get translated to
