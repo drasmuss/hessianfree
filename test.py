@@ -352,7 +352,7 @@ def test_plant():
 
     class Plant(Nonlinearity):
         def __init__(self, A, B, targets, init_state):
-            super(Plant, self).__init__(use_activations=False, stateful=True)
+            super(Plant, self).__init__(stateful=True)
 
             self.A = np.asarray(A)
             self.B = B
@@ -383,7 +383,7 @@ def test_plant():
             # handles the case where we're passed a single item instead
             # of batch)
 
-        def d_activation(self, x):
+        def d_activation(self, x, a):
             self.d_act_count += 1
             assert self.act_count == self.d_act_count
 
@@ -450,7 +450,7 @@ def test_plant():
                      layers=[Linear(), Tanh(), Tanh(), plant],
                      error_type="mse", debug=False,
                      rec_layers=[False, True, True, False],
-                     conns={0:[1, 2], 1:[2], 2:[3]},
+                     conns={0: [1, 2], 1: [2], 2: [3]},
                      W_init_params={"coeff": 0.01},
                      W_rec_params={"coeff": 0.01})
 
@@ -463,7 +463,6 @@ def test_plant():
 #         if i % 1 == 0:
 #             print "iteration", i
 #         rnn.gradient_descent(plant, None, l_rate=0.01)
-
 
     outputs = rnn.forward(plant, rnn.W)[-1]
 

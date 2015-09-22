@@ -470,9 +470,8 @@ class HessianFF(object):
             activations[i] = self.layers[i].activation(inputs)
 
             if deriv:
-                d_activations[i] = self.layers[i].d_activation(
-                    activations[i] if self.layers[i].use_activations
-                    else inputs)
+                d_activations[i] = self.layers[i].d_activation(inputs,
+                                                               activations[i])
 
         if deriv:
             return activations, d_activations

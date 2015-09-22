@@ -129,11 +129,9 @@ class HessianRNN(HessianFF):
 
                 # compute derivative
                 if deriv:
-                    d_act = self.layers[i].d_activation(
-                        activations[i][:, s] if
-                        self.layers[i].use_activations
-                        else ff_input + rec_input)[:, None, :]
-
+                    d_act = self.layers[i].d_activation(ff_input + rec_input,
+                                                        activations[i][:, s])
+                    d_act = d_act[:, None, :]
                     if d_activations[i] is None:
                         d_activations[i] = d_act
                     else:

@@ -3,13 +3,10 @@ from scipy.special import expit
 
 
 class Nonlinearity(object):
-    def __init__(self, use_activations=True, stateful=False):
-        # use_activations denotes whether the d_activation function takes
-        # activations as input or the same input as the activation function
-        self.use_activations = use_activations
-
+    def __init__(self, stateful=False):
         # True if this nonlinearity has internal state (in which case it
-        # also needs to define d_inputs and d_state)
+        # needs to return d_input, d_state, and d_output in d_activations;
+        # see Continuous for an example)
         self.stateful = stateful
 
     def activation(self, x):
@@ -17,15 +14,15 @@ class Nonlinearity(object):
 
         raise NotImplementedError()
 
-    def d_activation(self, x):
+    def d_activation(self, x, a):
         """Derivative of the nonlinearity with respect to the inputs."""
 
-        # note: if self.use_activations is True, then the input here will
-        # be self.activations(input), rather than the direct inputs
+        # note: a is self.activation(x), which can be used to more efficiently
+        # compute the derivative for some nonlinearities
         raise NotImplementedError()
 
     def reset(self):
-        """Reset the internal state of the nonlinearity."""
+        """Reset the nonlinearity to initial conditions."""
 
         pass
 
@@ -34,40 +31,35 @@ class Logistic(Nonlinearity):
     def __init__(self):
         super(Logistic, self).__init__()
         self.activation = expit
-        self.d_activation = lambda a: a * (1 - a)
+        self.d_activation = lambda x, a: a * (1 - a)
 
 
 class Tanh(Nonlinearity):
     def __init__(self):
         super(Tanh, self).__init__()
         self.activation = np.tanh
-        self.d_activation = lambda a: 1 - a ** 2
+        self.d_activation = lambda x, a: 1 - a ** 2
 
 
 class Linear(Nonlinearity):
     def __init__(self):
         super(Linear, self).__init__()
         self.activation = lambda x: x
-        self.d_activation = np.ones_like
+        self.d_activation = lambda x, a: np.ones_like(x)
 
 
 class ReLU(Nonlinearity):
     def __init__(self):
         super(ReLU, self).__init__()
         self.activation = lambda x: np.maximum(0, x)
-        self.d_activation = lambda a: a > 0
+        self.d_activation = lambda x, a: a > 0
 
 
 class Gaussian(Nonlinearity):
     def __init__(self):
-        super(Gaussian, self).__init__(use_activations=False)
-
-    def activation(self, x):
-        return np.exp(-x ** 2)
-
-    def d_activation(self, x):
-        a = self.activation(x)
-        return -2 * a * x
+        super(Gaussian, self).__init__()
+        self.activation = lambda x: np.exp(-x ** 2)
+        self.d_activation = lambda x, a: a * -2 * x
 
 
 class Softmax(Nonlinearity):
@@ -86,13 +78,13 @@ class Softmax(Nonlinearity):
 
         return e
 
-    def d_activation(self, a):
+    def d_activation(self, x, a):
         return a[..., None, :] * (np.eye(a.shape[-1]) - a[..., None])
 
 
 class SoftLIF(Nonlinearity):
     def __init__(self, sigma=1, tau_rc=0.02, tau_ref=0.002, amp=0.01):
-        super(SoftLIF, self).__init__(use_activations=False)
+        super(SoftLIF, self).__init__()
         self.sigma = sigma
         self.tau_rc = tau_rc
         self.tau_ref = tau_ref
@@ -116,29 +108,21 @@ class SoftLIF(Nonlinearity):
     def activation(self, x):
         return self.lif(self.softrelu(x))
 
-    def d_activation(self, x):
+    def d_activation(self, x, a):
         j = self.softrelu(x)
-        r = self.lif(j)
 
         d = np.zeros_like(j)
-        rr, jj, xx = r[j > 0], j[j > 0], x[j > 0]
-        d[j > 0] = (self.tau_rc * rr * rr) / (
+        aa, jj, xx = a[j > 0], j[j > 0], x[j > 0]
+        d[j > 0] = (self.tau_rc * aa * aa) / (
             self.amp * jj * (jj + 1) * (1 + np.exp(-xx / self.sigma)))
         return d
 
 
 class Continuous(Nonlinearity):
     def __init__(self, base, tau=1.0, dt=1.0):
-        super(Continuous, self).__init__(use_activations=False,
-                                         stateful=True)
+        super(Continuous, self).__init__(stateful=True)
         self.base = base
         self.coeff = dt / tau
-
-#         # derivative of state with respect to previous state
-#         self.d_state = np.diag(1 - self.coeff).astype(np.float32)
-#
-#         # derivative of state with respect to input
-#         self.d_input = np.diag(self.coeff).astype(np.float32)
 
         self.reset()
 
@@ -150,28 +134,24 @@ class Continuous(Nonlinearity):
 
         return self.base.activation(self.state)
 
-    def d_activation(self, x):
+    def d_activation(self, x, a):
         self.d_act_count += 1
-
-        # sanity check that state is in sync
-        assert self.act_count == self.d_act_count
 
         # note: x is not used here, this relies on self.state being implicitly
         # based on x (via self.activation()). hence the sanity check.
+        assert self.act_count == self.d_act_count
 
-        act_d = self.base.d_activation(self.base.activation(self.state) if
-                                       self.base.use_activations else
-                                       self.state)[..., None]
+        # derivative of state with respect to input
+        d_input = np.resize(self.coeff, (x.shape[0], x.shape[1], 1))
 
-        # TODO: fix this so it works if act_d returns matrices
+        # derivative of state with respect to previous state
+        d_state = np.resize(1 - self.coeff, (x.shape[0], x.shape[1], 1))
 
-        d_input = np.resize(self.coeff,
-                            (x.shape[0], x.shape[1], 1))
+        # derivative of output with respect to state
+        # TODO: fix this so it works if base returns matrices
+        d_output = self.base.d_activation(self.state, a)[..., None]
 
-        d_state = np.resize(1 - self.coeff,
-                            (x.shape[0], x.shape[1], 1))
-
-        return np.concatenate((d_input, d_state, act_d), axis=-1)
+        return np.concatenate((d_input, d_state, d_output), axis=-1)
 
     def reset(self):
         self.state = 0.0
