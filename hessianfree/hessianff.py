@@ -1,4 +1,5 @@
-"""Implementation of Hessian-free optimization for feedforward networks.
+"""Implementation of feedforward network, including Gauss-Newton approximation
+for use in Hessian-free optimization.
 
 Author: Daniel Rasmussen (drasmussen@princeton.edu)
 
@@ -22,9 +23,10 @@ except:
     print "PyCuda not installed, or no compatible device detected"
 
 import nonlinearities
+from optimizers import HessianFree
 
 
-class HessianFF(object):
+class FFNet(object):
     def __init__(self, shape, layers=nonlinearities.Logistic(),
                  conns=None, error_type="mse", W_init_params={},
                  use_GPU=False, load_weights=None, debug=False):
@@ -127,7 +129,7 @@ class HessianFF(object):
         else:
             self.outer_sum = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
 
-    def run_batches(self, inputs, targets, CG_iter=250, init_damping=1.0,
+    def run_batches(self, inputs, targets, optimizer,
                     max_epochs=1000, batch_size=None, test=None,
                     target_err=1e-6, plotting=False, test_err=None,
                     file_output=None):
@@ -136,8 +138,8 @@ class HessianFF(object):
         :param inputs: input vectors (or a callable plant that will generate
             the input vectors dynamically)
         :param targets: target vectors
-        :param CG_iter: the maximum number of CG iterations to run per epoch
-        :param init_damping: the initial value of the Tikhonov damping
+        :param optimizer: computes the weight update each epoch (see
+            optimizers.py)
         :param max_epochs: the maximum number of epochs to run
         :param batch_size: the size of the minibatch to use in each epoch
         :param test: tuple of (inputs,targets) to use as the test data (if None
@@ -156,29 +158,12 @@ class HessianFF(object):
         else:
             print_period = 10
 
-        init_delta = np.zeros(self.W.size, dtype=self.dtype)
-        self.damping = init_damping
         test_errs = []
-        best_W = None
-        best_error = None
-
-        plant = inputs if callable(inputs) else None
-
-        if plotting:
-            # data is dumped out to file so that the plots can be
-            # displayed/updated in parallel (see dataplotter.py)
-            plots = {}
-            plot_vars = ["new_err", "l_rate", "np.linalg.norm(delta)",
-                         "self.damping", "np.linalg.norm(self.W)",
-                         "deltas[-1][0]", "test_errs[-1]"]
-            for v in plot_vars:
-                plots[v] = []
-
-            with open("%s_plots.pkl" % (file_output
-                                        if file_output is not None
-                                        else "HF"),
-                      "wb") as f:
-                pickle.dump(plots, f)
+        self.best_W = None
+        self.best_error = None
+        file_output = "HF" if file_output is None else file_output
+        plots = defaultdict(list)
+        self.optimizer = optimizer
 
         for i in range(max_epochs):
             self.epoch = i
@@ -201,79 +186,9 @@ class HessianFF(object):
 
             assert self.activations[-1].dtype == self.dtype
 
-            err = self.error()  # note: don't reuse previous error (diff batch)
-
-            # compute gradient
-            grad = self.calc_grad()
-
-            if i % print_period == 0:
-                print "initial err", err
-                print "grad norm", np.linalg.norm(grad)
-
-            # run CG
-            deltas = self.conjugate_gradient(init_delta * 0.95, grad,
-                                             iters=CG_iter)
-
-            if i % print_period == 0:
-                print "CG steps", deltas[-1][0]
-
-            init_delta = deltas[-1][1]  # note: don't backtrack this
-
-            # CG backtracking
-            new_err = np.inf
-            for j in range(len(deltas) - 1, -1, -1):
-                prev_err = self.error(self.W + deltas[j][1], inputs=plant)
-                if prev_err > new_err:
-                    break
-                delta = deltas[j][1]
-                new_err = prev_err
-            else:
-                j -= 1
-
-            if i % print_period == 0:
-                print "using iteration", deltas[j + 1][0]
-                print "backtracked err", new_err
-
-            # update damping parameter (compare improvement predicted by
-            # quadratic model to the actual improvement in the error)
-            denom = (0.5 * np.dot(delta,
-                                  self.calc_G(delta, damping=self.damping)) +
-                     np.dot(grad, delta))
-
-            improvement_ratio = (new_err - err) / denom if denom != 0 else 1
-            if improvement_ratio < 0.25:
-                self.damping *= 1.5
-            elif improvement_ratio > 0.75:
-                self.damping *= 0.66
-
-            if i % print_period == 0:
-                print "improvement_ratio", improvement_ratio
-                print "damping", self.damping
-
-            # line search to find learning rate
-            l_rate = 1.0
-            min_improv = min(1e-2 * np.dot(grad, delta), 0)
-            for _ in range(60):
-                # check if the improvement is greater than the minimum
-                # improvement we would expect based on the starting gradient
-                if new_err <= err + l_rate * min_improv:
-                    break
-
-                l_rate *= 0.8
-                new_err = self.error(self.W + l_rate * delta, inputs=plant)
-            else:
-                # no good update, so skip this iteration
-                l_rate = 0.0
-                new_err = err
-
-            if i % print_period == 0:
-                print "min_improv", min_improv
-                print "l_rate", l_rate
-                print "l_rate err", new_err
-                print "improvement", new_err - err
-
-            # update weights
-            self.W += l_rate * delta
+            # compute update
+            update = optimizer.compute_update(i % print_period == 0)
+            self.W += update
 
             # invalidate cached activations (shouldn't be necessary,
             # but doesn't hurt)
@@ -281,6 +196,7 @@ class HessianFF(object):
             self.d_activations = None
             self.GPU_activations = None
 
+            # TODO: maybe don't compute test error every iteration?
             # compute test error
             if test is None:
                 test_in, test_t = inputs, targets
@@ -298,20 +214,24 @@ class HessianFF(object):
                 print "test error", test_errs[-1]
 
             # save the weights with the best error
-            if best_W is None or test_errs[-1] < best_error:
-                best_W = self.W.copy()
-                best_error = test_errs[-1]
+            if self.best_W is None or test_errs[-1] < self.best_error:
+                self.best_W = self.W.copy()
+                self.best_error = test_errs[-1]
 
             # dump plot data
             if plotting:
-                for v in plot_vars:
-                    plots[v] += [eval(v)]
+                plots["update norm"] += [np.linalg.norm(update)]
+                plots["W norm"] += [np.linalg.norm(self.W)]
+                plots["test error"] += [test_errs[-1]]
 
-                with open("%s_plots.pkl" % (file_output
-                                            if file_output is not None
-                                            else "HF"),
-                          "wb") as f:
+                if hasattr(optimizer, "plots"):
+                    plots.update(optimizer.plots)
+
+                with open("%s_plots.pkl" % file_output, "wb") as f:
                     pickle.dump(plots, f)
+
+            # dump weights
+            np.save("%s_weights.npy" % file_output, self.W)
 
             # check for termination
             if test_errs[-1] < target_err:
@@ -320,65 +240,6 @@ class HessianFF(object):
             if test is not None and i > 20 and test_errs[-10] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break
-
-        self.W[:] = best_W
-#         np.save("%s_weights.npy" % file_output, self.W)
-
-    def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
-        """Weight initialization, given shapes of weight matrices.
-
-        Note: coeff, biases, and init_type can be specified by the
-        W_init_params parameter in __init__.  Each can be specified as a
-        single value (for all matrices) or as a list giving a value for each
-        matrix.
-
-        :param shapes: list of (pre,post) shapes for each weight matrix
-        :param coeff: scales the magnitude of the connection weights
-        :param biases: bias values for the post of each matrix
-        :param init_type: type of initialization to use (currently supports
-            'sparse', 'uniform', 'gaussian')
-        """
-
-        # if given single parameters, expand for all matrices
-        if isinstance(coeff, (int, float)):
-            coeff = [coeff] * len(shapes)
-        if isinstance(biases, (int, float)):
-            biases = [biases] * len(shapes)
-        if isinstance(init_type, str):
-            init_type = [init_type] * len(shapes)
-
-        W = [np.zeros((pre + 1, post), dtype=self.dtype)
-             for pre, post in shapes]
-
-        for i, s in enumerate(shapes):
-            if init_type[i] == "sparse":
-                # sparse initialization (from martens)
-                num_conn = 15
-
-                for j in range(s[1]):
-                    # pick num_conn random pre neurons
-                    indices = np.random.choice(np.arange(s[0]),
-                                               size=min(num_conn, s[0]),
-                                               replace=False)
-
-                    # connect to post
-                    W[i][indices, j] = np.random.randn(indices.size) * coeff[i]
-            elif init_type[i] == "uniform":
-                W[i][:-1] = np.random.uniform(-coeff[i] / np.sqrt(s[0]),
-                                              coeff[i] / np.sqrt(s[0]),
-                                              (s[0], s[1]))
-            elif init_type[i] == "gaussian":
-                W[i][:-1] = np.random.randn(s[0], s[1]) * coeff[i]
-            else:
-                raise ValueError("Unknown weight initialization (%s)"
-                                 % init_type)
-
-            # set biases
-            W[i][-1, :] = biases[i]
-
-        W = np.concatenate([w.flatten() for w in W])
-
-        return W
 
     def cache_minibatch(self, inputs, targets, batch_size=None):
         """Pick a subset of inputs and targets to use in minibatch, and cache
@@ -409,43 +270,6 @@ class HessianFF(object):
                                                                 deriv=True)
             self.inputs = inputs.get_inputs().astype(np.float32)
             self.targets = inputs.get_targets().astype(np.float32)
-
-    def compute_offsets(self):
-        """Precompute offsets for layers in the overall parameter vector."""
-
-        n_params = [(self.shape[pre] + 1) * self.shape[post]
-                    for pre in self.conns
-                    for post in self.conns[pre]]
-        self.offsets = {}
-        offset = 0
-        for pre in self.conns:
-            for post in self.conns[pre]:
-                n_params = (self.shape[pre] + 1) * self.shape[post]
-                self.offsets[(pre, post)] = (
-                    offset,
-                    offset + n_params - self.shape[post],
-                    offset + n_params)
-                offset += n_params
-
-        return offset
-
-    def get_weights(self, params, conn, separate=True):
-        """Get weight matrix for a connection from overall parameter vector."""
-
-        if conn not in self.offsets:
-            return None
-
-        offset, W_end, b_end = self.offsets[conn]
-        if separate:
-            W = params[offset:W_end]
-            b = params[W_end:b_end]
-
-            return (W.reshape((self.shape[conn[0]],
-                               self.shape[conn[1]])),
-                    b)
-        else:
-            return params[offset:b_end].reshape((self.shape[conn[0]] + 1,
-                                                 self.shape[conn[1]]))
 
     def forward(self, input, params, deriv=False):
         """Compute feedforward activations for given input and parameters.
@@ -605,101 +429,10 @@ class HessianFF(object):
             print calc_grad / grad
             raw_input("Paused (press enter to continue)")
 
-    def gradient_descent(self, inputs, targets, l_rate=1, batch_size=None,
-                         max_epochs=10000, test=None, target_err=1e-6,
-                         plotting=False, test_err=None, file_output=None):
-        """Basic first-order gradient descent (for comparison)."""
-
-        if self.debug:
-            print_period = 1
-        else:
-            print_period = 100
-
-        test_errs = []
-        best_W = None
-        best_error = None
-        self.GPU_activations = None
-
-        if plotting:
-            # data is dumped out to file so that the plots can be
-            # displayed/updated in parallel (see dataplotter.py)
-            plots = {}
-            plot_vars = ["new_err", "test_errs[-1]"]
-            for v in plot_vars:
-                plots[v] = []
-
-            with open("%s_plots.pkl" % (file_output
-                                        if file_output is not None
-                                        else "SGD"),
-                      "wb") as f:
-                pickle.dump(plots, f)
-
-        for i in range(max_epochs):
-            self.epoch = i
-            self.cache_minibatch(inputs, targets, batch_size)
-
-            if i % print_period == 0:
-                print "step", i
-
-                new_err = self.error()
-                print "training error", new_err
-
-                # compute test error
-                if test is None:
-                    test_in, test_t = inputs, targets
-                else:
-                    test_in, test_t = test[0], test[1]
-
-                if test_err is None:
-                    err = self.error(self.W, test_in, test_t)
-                else:
-                    output = self.forward(test_in, self.W)[-1]
-                    err = test_err(output, test_t)
-                test_errs += [err]
-
-                print "test error", test_errs[-1]
-
-                # save the weights with the best error
-                if best_W is None or test_errs[-1] < best_error:
-                    best_W = self.W.copy()
-                    best_error = test_errs[-1]
-
-                # dump plot data
-                if plotting:
-                    for v in plot_vars:
-                        plots[v] += [eval(v)]
-
-                    with open("%s_plots.pkl" % (file_output
-                                                if file_output is not None
-                                                else "SGD"),
-                              "wb") as f:
-                        pickle.dump(plots, f)
-
-                # check for termination
-                if test_errs[-1] < target_err:
-                    print "target error reached"
-                    break
-                if (test is not None and i > 100 and
-                        test_errs[-100] < test_errs[-1]):
-                    print "overfitting detected, terminating"
-                    break
-
-            # compute gradient
-            grad = self.calc_grad()
-
-            if self.debug:
-                self.check_grad(grad)
-
-            # update weights
-            self.W -= l_rate * grad
-
-    def calc_G(self, v, damping=0, output=None):
+    def calc_G(self, v, damping=0):
         """Compute Gauss-Newton matrix-vector product."""
 
-        if output is None:
-            Gv = np.zeros(self.W.size, dtype=self.dtype)
-        else:
-            Gv = output
+        Gv = np.zeros(self.W.size, dtype=self.dtype)
 
         # R forward pass
         R_activations = [None for _ in range(self.n_layers)]
@@ -801,88 +534,98 @@ class HessianFF(object):
             print calc_G / Gv
             raw_input("Paused (press enter to continue)")
 
-    def conjugate_gradient(self, init_delta, grad, iters=250):
-        """Compute weight update using conjugate gradient algorithm."""
+    def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
+        """Weight initialization, given shapes of weight matrices.
 
-        store_iter = 5
-        store_mult = 1.3
-        deltas = []
-        G_dir = np.zeros(self.W.size, dtype=self.dtype)
-        vals = np.zeros(iters, dtype=self.dtype)
+        Note: coeff, biases, and init_type can be specified by the
+        W_init_params parameter in __init__.  Each can be specified as a
+        single value (for all matrices) or as a list giving a value for each
+        matrix.
 
-        base_grad = -grad
-        delta = init_delta
-        residual = base_grad - self.calc_G(init_delta, damping=self.damping)
-        res_norm = np.dot(residual, residual)
-        direction = residual.copy()
+        :param shapes: list of (pre,post) shapes for each weight matrix
+        :param coeff: scales the magnitude of the connection weights
+        :param biases: bias values for the post of each matrix
+        :param init_type: type of initialization to use (currently supports
+            'sparse', 'uniform', 'gaussian')
+        """
 
-        if self.debug:
-            self.check_grad(grad)
+        # if given single parameters, expand for all matrices
+        if isinstance(coeff, (int, float)):
+            coeff = [coeff] * len(shapes)
+        if isinstance(biases, (int, float)):
+            biases = [biases] * len(shapes)
+        if isinstance(init_type, str):
+            init_type = [init_type] * len(shapes)
 
-        for i in range(iters):
-            if self.debug:
-                print "-" * 20
-                print "CG iteration", i
-                print "delta norm", np.linalg.norm(delta)
-                print "direction norm", np.linalg.norm(direction)
+        W = [np.zeros((pre + 1, post), dtype=self.dtype)
+             for pre, post in shapes]
 
-            self.calc_G(direction, damping=self.damping, output=G_dir)
+        for i, s in enumerate(shapes):
+            if init_type[i] == "sparse":
+                # sparse initialization (from martens)
+                num_conn = 15
 
-            # calculate step size
-            step = res_norm / np.dot(direction, G_dir)
+                for j in range(s[1]):
+                    # pick num_conn random pre neurons
+                    indices = np.random.choice(np.arange(s[0]),
+                                               size=min(num_conn, s[0]),
+                                               replace=False)
 
-            if self.debug:
-                print "step", step
+                    # connect to post
+                    W[i][indices, j] = np.random.randn(indices.size) * coeff[i]
+            elif init_type[i] == "uniform":
+                W[i][:-1] = np.random.uniform(-coeff[i] / np.sqrt(s[0]),
+                                              coeff[i] / np.sqrt(s[0]),
+                                              (s[0], s[1]))
+            elif init_type[i] == "gaussian":
+                W[i][:-1] = np.random.randn(s[0], s[1]) * coeff[i]
+            else:
+                raise ValueError("Unknown weight initialization (%s)"
+                                 % init_type)
 
-                self.check_G(G_dir, direction, self.damping)
+            # set biases
+            W[i][-1, :] = biases[i]
 
-                assert np.isfinite(step)
-                assert step >= 0
-                assert (np.linalg.norm(np.dot(direction, G_dir)) >=
-                        np.linalg.norm(np.dot(direction,
-                                              self.calc_G(direction,
-                                                          damping=0))))
+        W = np.concatenate([w.flatten() for w in W])
 
-            # update weight delta
-            delta += step * direction
+        return W
 
-            # update residual
-            residual -= step * G_dir
-            new_res_norm = np.dot(residual, residual)
+    def compute_offsets(self):
+        """Precompute offsets for layers in the overall parameter vector."""
 
-            if new_res_norm < 1e-20:
-                # early termination (mainly to prevent numerical errors);
-                # if this ever triggers, it's probably because the minimum
-                # gap in the normal termination condition (below) is too low.
-                # this only occurs on really simple problems
-                break
+        n_params = [(self.shape[pre] + 1) * self.shape[post]
+                    for pre in self.conns
+                    for post in self.conns[pre]]
+        self.offsets = {}
+        offset = 0
+        for pre in self.conns:
+            for post in self.conns[pre]:
+                n_params = (self.shape[pre] + 1) * self.shape[post]
+                self.offsets[(pre, post)] = (
+                    offset,
+                    offset + n_params - self.shape[post],
+                    offset + n_params)
+                offset += n_params
 
-            # update direction
-            beta = new_res_norm / res_norm
-            direction *= beta
-            direction += residual
+        return offset
 
-            res_norm = new_res_norm
+    def get_weights(self, params, conn, separate=True):
+        """Get weight matrix for a connection from overall parameter vector."""
 
-            if i == store_iter:
-                deltas += [(i, np.copy(delta))]
-                store_iter = int(store_iter * store_mult)
+        if conn not in self.offsets:
+            return None
 
-            # martens termination conditions
-            vals[i] = -0.5 * np.dot(residual + base_grad, delta)
+        offset, W_end, b_end = self.offsets[conn]
+        if separate:
+            W = params[offset:W_end]
+            b = params[W_end:b_end]
 
-            gap = max(int(0.1 * i), 10)
-
-            if self.debug:
-                print "termination val", vals[i]
-
-            if (i > gap and vals[i - gap] < 0 and
-                    (vals[i] - vals[i - gap]) / vals[i] < 5e-6 * gap):
-                break
-
-        deltas += [(i, np.copy(delta))]
-
-        return deltas
+            return (W.reshape((self.shape[conn[0]],
+                               self.shape[conn[1]])),
+                    b)
+        else:
+            return params[offset:b_end].reshape((self.shape[conn[0]] + 1,
+                                                 self.shape[conn[1]]))
 
     def init_loss(self, loss_type):
         # sanity checks

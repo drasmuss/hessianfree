@@ -1,2 +1,2 @@
-from hessianff import HessianFF
-from hessianrnn import HessianRNN
+from hessianff import FFNet
+from hessianrnn import RNNet

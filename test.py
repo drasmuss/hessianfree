@@ -5,12 +5,12 @@ import ast
 import numpy as np
 import matplotlib.pyplot as plt
 
-from hessianfree.hessianff import HessianFF
-from hessianfree.hessianrnn import HessianRNN
-
+from hessianfree.hessianff import FFNet
+from hessianfree.hessianrnn import RNNet
 from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
                                         Continuous, Linear, Nonlinearity,
                                         Gaussian)
+from hessianfree.optimizers import HessianFree, SGD
 
 
 def test_xor():
@@ -20,16 +20,14 @@ def test_xor():
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    ff = HessianFF([2, 5, 1], debug=True, use_GPU=False)
+    ff = FFNet([2, 5, 1], debug=True, use_GPU=False)
 
-    ff.run_batches(inputs, targets, CG_iter=2, max_epochs=40,
-                   plotting=True)
+    ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=2),
+                   max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 100 == 0:
-#             print "iteration", i
-#         ff.gradient_descent(inputs, targets, l_rate=1)
+#     ff.run_batches(inputs, targets, optimizer=SGD(ff, l_rate=1),
+#                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
         print "input", i
@@ -45,11 +43,11 @@ def test_mnist(model_args=None, run_args=None):
         train, _, test = pickle.load(f)
 
     if model_args is None:
-        ff = HessianFF([28 * 28, 1024, 512, 256, 32, 10], error_type="mse",
-                       layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
-                       use_GPU=True, debug=False)
+        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10], error_type="mse",
+                   layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
+                   use_GPU=True, debug=False)
     else:
-        ff = HessianFF(**model_args)
+        ff = FFNet(**model_args)
 
     inputs = train[0]
     targets = np.zeros((inputs.shape[0], 10), dtype=np.float32)
@@ -66,11 +64,16 @@ def test_mnist(model_args=None, run_args=None):
                        np.argmax(targets, axis=-1))
 
     if run_args is None:
-        ff.run_batches(inputs, targets, CG_iter=250, batch_size=7500,
-                       test=test, max_epochs=1000, init_damping=45,
+        ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=250,
+                                                              init_damping=45),
+                       batch_size=7500, test=test, max_epochs=1000,
                        plotting=True, test_err=test_err)
     else:
-        ff.run_batches(inputs, targets, test=test, test_err=test_err,
+        CG_iter = run_args.pop("CG_iter", 250)
+        init_damping = run_args.pop("init_damping", 1)
+        ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter,
+                                                              init_damping),
+                       test=test, test_err=test_err,
                        **run_args)
 
     output = ff.forward(test[0], ff.W)[-1]
@@ -141,13 +144,12 @@ def test_cifar():
     tmp[np.arange(len(test[0])), test[1]] = 1.0
     test[1] = tmp
 
-    ff = HessianFF([dim * dim * 3, 1024, 512, 256, 32, 10],
-                   layers=[Linear()] + [Tanh()] * 4 + [Softmax()],
-                   error_type="ce", use_GPU=True,
-                   debug=False, load_weights=None)
+    ff = FFNet([dim * dim * 3, 1024, 512, 256, 32, 10],
+               layers=[Linear()] + [Tanh()] * 4 + [Softmax()],
+               error_type="ce", use_GPU=True, debug=False, load_weights=None)
 
-    ff.run_batches(train[0], train[1], CG_iter=300, batch_size=5000,
-                   test=test, max_epochs=1000, plotting=True)
+    ff.run_batches(train[0], train[1], optimizer=HessianFree(ff, CG_iter=300),
+                   batch_size=5000, test=test, max_epochs=1000, plotting=True)
 
     output = ff.forward(test[0], ff.W)[-1]
     class_err = np.mean(np.argmax(output, axis=1) !=
@@ -164,17 +166,14 @@ def test_softlif():
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    ff = HessianFF([2, 10, 1], layers=lifs,
-                   debug=True, use_GPU=False)
+    ff = FFNet([2, 10, 1], layers=lifs, debug=True, use_GPU=False)
 
-    ff.run_batches(inputs, targets, CG_iter=50, max_epochs=50,
-                   plotting=True)
+    ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=50),
+                   max_epochs=50, plotting=True)
 
     # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 100 == 0:
-#             print "iteration", i
-#         ff.gradient_descent(inputs, targets, l_rate=1)
+#     ff.run_batches(inputs, targets, optimizer=SGD(ff, l_rate=1),
+#                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
         print "input", i
@@ -189,17 +188,15 @@ def test_crossentropy():
                         dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
-    ff = HessianFF([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
-                   debug=True, error_type="ce")
+    ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
+               debug=True, error_type="ce")
 
-    ff.run_batches(inputs, targets, CG_iter=2, max_epochs=40,
-                   plotting=True)
+    ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=2),
+                   max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 100 == 0:
-#             print "iteration", i
-#         ff.gradient_descent(inputs, targets, l_rate=1)
+#     ff.run_batches(inputs, targets, optimizer=SGD(ff, l_rate=1),
+#                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
         print "input", i
@@ -214,7 +211,8 @@ def test_profile():
     import cProfile
     import pstats
 
-    cProfile.run("test_mnist(None, {'max_epochs':5, 'plotting':False, 'batch_size':7500})",
+    cProfile.run("test_mnist(None, {'max_epochs':5, 'plotting':False, "
+                 "'batch_size':7500})",
                  "profilestats")
     p = pstats.Stats("profilestats")
     p.strip_dirs().sort_stats('time').print_stats(20)
@@ -226,7 +224,7 @@ def test_GPU():
 
     import time
 
-    ff = HessianFF([1, 1], use_GPU=True, debug=False)
+    ff = FFNet([1, 1], use_GPU=True, debug=False)
     ff.GPU_activations = None
     gpu = ff.outer_sum
     cpu = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
@@ -270,19 +268,18 @@ def test_integrator():
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(shape=[1, 10, 10, 1], struc_damping=0.0,
-                     layers=Logistic(), error_type="mse",
-                     conns={0: [1, 2], 1: [2], 2: [3]},
-                     use_GPU=False, debug=False)
+    rnn = RNNet(shape=[1, 10, 10, 1], struc_damping=0.0,
+                layers=Logistic(), error_type="mse",
+                conns={0: [1, 2], 1: [2], 2: [3]},
+                use_GPU=False, debug=False)
 
-    rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
-                    test=test, max_epochs=100, plotting=True)
+    rnn.run_batches(inputs, targets, optimizer=HessianFree(rnn, CG_iter=100),
+                    batch_size=None, test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 100 == 0:
-#             print "iteration", i
-#         rnn.gradient_descent(inputs, targets, l_rate=0.1)
+#     rnn.run_batches(inputs, targets, optimizer=SGD(rnn, l_rate=0.1),
+#                     batch_size=None, test=test, max_epochs=10000,
+#                     plotting=True)
 
     plt.figure()
     plt.plot(inputs.squeeze().T)
@@ -315,18 +312,17 @@ def test_continuous():
 
     test = (inputs, targets)
 
-    rnn = HessianRNN(shape=[1, 10, 1], struc_damping=0.0,
-                     layers=[Linear(), nl, Logistic()], error_type="mse",
-                     use_GPU=False, debug=False)
+    rnn = RNNet(shape=[1, 10, 1], struc_damping=0.0,
+                layers=[Linear(), nl, Logistic()], error_type="mse",
+                use_GPU=False, debug=False)
 
-    rnn.run_batches(inputs, targets, CG_iter=100, batch_size=None,
-                    test=test, max_epochs=100, plotting=True)
+    rnn.run_batches(inputs, targets, optimizer=HessianFree(rnn, CG_iter=100),
+                    batch_size=None, test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 10 == 0:
-#             print "iteration", i
-#         rnn.gradient_descent(inputs, targets, l_rate=0.1)
+#     rnn.run_batches(inputs, targets, optimizer=SGD(rnn, l_rate=0.1),
+#                     batch_size=None, test=test, max_epochs=10000,
+#                     plotting=True)
 
     plt.figure()
     plt.plot(inputs.squeeze().T)
@@ -413,8 +409,6 @@ def test_plant():
             self.act_count = 0
             self.d_act_count = 0
             self.state = self.init_state.copy()
-            # TODO: get it to work with stochastic plants (need to keep the
-            # initialization stable for calc_J)
 #             self.state = self.init_state[
 #                 np.random.choice(np.arange(len(self.init_state)),
 #                                  size=self.shape[0], replace=False)]
@@ -446,23 +440,21 @@ def test_plant():
     # TODO: why is the test generalization so bad?
     test = None  # (Plant(A, B, targets, init2), None)
 
-    rnn = HessianRNN(shape=[2, 10, 10, 2], struc_damping=0.0,
-                     layers=[Linear(), Tanh(), Tanh(), plant],
-                     error_type="mse", debug=False,
-                     rec_layers=[False, True, True, False],
-                     conns={0: [1, 2], 1: [2], 2: [3]},
-                     W_init_params={"coeff": 0.01},
-                     W_rec_params={"coeff": 0.01})
+    rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=0.0,
+                layers=[Linear(), Tanh(), Tanh(), plant],
+                error_type="mse", debug=False,
+                rec_layers=[False, True, True, False],
+                conns={0: [1, 2], 1: [2], 2: [3]},
+                W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
 
-    rnn.run_batches(plant, None, CG_iter=100, batch_size=None,
-                    test=test, max_epochs=100, plotting=True,
-                    init_damping=1)
+    rnn.run_batches(plant, None, optimizer=HessianFree(rnn, CG_iter=100,
+                                                       init_damping=1),
+                    batch_size=None, test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
-#     for i in range(10000):
-#         if i % 1 == 0:
-#             print "iteration", i
-#         rnn.gradient_descent(plant, None, l_rate=0.01)
+#     rnn.run_batches(plant, None, optimizer=SGD(rnn, l_rate=0.01),
+#                     batch_size=None, test=test, max_epochs=10000,
+#                     plotting=True)
 
     outputs = rnn.forward(plant, rnn.W)[-1]
 

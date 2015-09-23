@@ -50,6 +50,8 @@ doesn't usually require much tweaking)
 * Gradient checking (and Gauss-Newton matrix checking) implemented to help with debugging
 * Inputs can be predefined or generated dynamically by some other system (like 
 an environmental simulation)
+* Different optimizers can be swapped out for comparison (e.g., Hessian-free 
+versus SGD)
 
 The best way to understand how to use these features is to look through the 
 examples in `test.py`.

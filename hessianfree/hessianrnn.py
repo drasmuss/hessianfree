@@ -1,4 +1,5 @@
-"""Implementation of Hessian-free optimization for recurrent networks.
+"""Implementation of recurrent network, including Gauss-Newton approximation
+for use in Hessian-free optimization.
 
 Author: Daniel Rasmussen (drasmussen@princeton.edu)
 
@@ -10,10 +11,10 @@ Machine Learning.
 
 import numpy as np
 
-from hessianff import HessianFF
+from hessianff import FFNet
 
 
-class HessianRNN(HessianFF):
+class RNNet(FFNet):
     def __init__(self, shape, struc_damping=None, rec_layers=None,
                  W_rec_params={}, **kwargs):
         """Initialize the parameters of the network.
@@ -26,7 +27,7 @@ class HessianRNN(HessianFF):
         :param W_rec_params: weight initialization parameter dict for recurrent
             weights (passed to init_weights, see parameter descriptions there)
 
-        See HessianFF for the rest of the parameters.
+        See FFNet for the rest of the parameters.
         """
 
         self.struc_damping = struc_damping
@@ -39,7 +40,7 @@ class HessianRNN(HessianFF):
         if len(rec_layers) != len(shape):
             raise ValueError("Must define recurrence for each layer")
 
-        super(HessianRNN, self).__init__(shape, **kwargs)
+        super(RNNet, self).__init__(shape, **kwargs)
 
         # add on recurrent weights
         if kwargs.get("load_weights", None) is None and np.any(rec_layers):
@@ -48,23 +49,6 @@ class HessianRNN(HessianFF):
                                             for l in range(self.n_layers)
                                             if rec_layers[l]],
                                            **W_rec_params)))
-
-    def compute_offsets(self):
-        """Precompute offsets for layers in the overall parameter vector."""
-
-        ff_offset = super(HessianRNN, self).compute_offsets()
-
-        # offset for recurrent weights is end of ff weights
-        offset = ff_offset
-        for l in range(self.n_layers):
-            if self.rec_layers[l]:
-                self.offsets[(l, l)] = (
-                    offset,
-                    offset + self.shape[l] * self.shape[l],
-                    offset + (self.shape[l] + 1) * self.shape[l])
-                offset += (self.shape[l] + 1) * self.shape[l]
-
-        return offset - ff_offset
 
     def forward(self, input, params, deriv=False):
         """Compute activations for given input sequence and parameters.
@@ -220,14 +204,10 @@ class HessianRNN(HessianFF):
 
         return grad
 
-    def calc_G(self, v, damping=0, output=None):
+    def calc_G(self, v, damping=0):
         """Compute Gauss-Newton matrix-vector product."""
 
-        if output is None:
-            Gv = np.zeros(self.W.size, dtype=self.dtype)
-        else:
-            Gv = output
-            Gv[:] = 0
+        Gv = np.zeros(self.W.size, dtype=self.dtype)
 
         sig_len = self.inputs.shape[1]
 
@@ -330,11 +310,11 @@ class HessianRNN(HessianFF):
                                              transpose=True)
 
                 # apply structural damping
-                if self.struc_damping is not None and self.rec_layers[l]:
+                struc_damping = getattr(self.optimizer, "struc_damping", None)
+                if struc_damping is not None and self.rec_layers[l]:
                     # penalize change in the output w.r.t. input (which is what
                     # R_activations represents)
-                    R_deltas[l] += (damping * self.struc_damping *
-                                    R_activations[l][:, s])
+                    R_deltas[l] += struc_damping * R_activations[l][:, s]
 
                 # recurrent gradient
                 if self.rec_layers[l]:
@@ -353,3 +333,20 @@ class HessianRNN(HessianFF):
         Gv += damping * v  # Tikhonov damping
 
         return Gv
+
+    def compute_offsets(self):
+        """Precompute offsets for layers in the overall parameter vector."""
+
+        ff_offset = super(RNNet, self).compute_offsets()
+
+        # offset for recurrent weights is end of ff weights
+        offset = ff_offset
+        for l in range(self.n_layers):
+            if self.rec_layers[l]:
+                self.offsets[(l, l)] = (
+                    offset,
+                    offset + self.shape[l] * self.shape[l],
+                    offset + (self.shape[l] + 1) * self.shape[l])
+                offset += (self.shape[l] + 1) * self.shape[l]
+
+        return offset - ff_offset
