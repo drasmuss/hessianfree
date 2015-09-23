@@ -394,7 +394,8 @@ class HessianFF(object):
             self.targets = targets[indices]
 
             # cache activations
-            self.activations, self.d_activations = self.forward(inputs, self.W,
+            self.activations, self.d_activations = self.forward(self.inputs,
+                                                                self.W,
                                                                 deriv=True)
         else:
             if targets is not None:
@@ -962,7 +963,7 @@ class HessianFF(object):
             start = int(n_threads / threads_per)
 
             if start >= vec_len:
-                return vec_len
+                return np.asscalar(vec_len)
 
             mid = int(np.sqrt(vec_len))
             for n in range(start, 0 if start < mid else mid - 1, -1):
