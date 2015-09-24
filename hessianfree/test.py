@@ -476,11 +476,12 @@ def test_plant():
     plt.show()
 
 
-if len(sys.argv) < 2:
-    test_xor()
-else:
-    if "test_%s" % sys.argv[1] in locals():
-        locals()["test_%s" % sys.argv[1]](*[ast.literal_eval(a)
-                                            for a in sys.argv[2:]])
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        test_xor()
     else:
-        print "Unknown function (%s)" % sys.argv[1]
+        if "test_%s" % sys.argv[1] in locals():
+            locals()["test_%s" % sys.argv[1]](*[ast.literal_eval(a)
+                                                for a in sys.argv[2:]])
+        else:
+            print "Unknown function (%s)" % sys.argv[1]
