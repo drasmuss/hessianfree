@@ -14,14 +14,6 @@ from copy import deepcopy
 
 import numpy as np
 
-try:
-    import pycuda.autoinit
-    import pycuda.driver as drv
-    from pycuda.compiler import SourceModule
-    from pycuda import gpuarray
-except:
-    print "PyCuda not installed, or no compatible device detected"
-
 import nonlinearities
 from optimizers import HessianFree
 
@@ -670,6 +662,15 @@ class FFNet(object):
         self.loss = (loss, d_loss, d2_loss)
 
     def init_GPU(self):
+        try:
+            import pycuda.autoinit
+            import pycuda.driver as drv
+            from pycuda.compiler import SourceModule
+            from pycuda import gpuarray
+        except:
+            raise ImportError("PyCuda not installed, or no compatible device "
+                              "detected. Set use_GPU=False.")
+
         dev = pycuda.autoinit.device
         print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
         self.num_threads = dev.MAX_THREADS_PER_BLOCK
