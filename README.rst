@@ -8,18 +8,32 @@ Martens, J. (2010). Deep learning via Hessian-free optimization. In Proceedings
 of the 27th International Conference on Machine Learning.
 
 Setup
------
+=====
 
-Quick install
-^^^^^^^^^^^^^
+Quick start
+-----------
+
+To install the package, open a command terminal and enter:
 
 .. code-block:: bash
 
     pip install hessianfree
+    
+To make sure things are working, open the python interpreter and enter:
+
+.. code-block:: python
+    
+    import hessianfree as hf
+    hf.test.test_xor()
+    
+A simple xor training example will run, at the end of which it will display
+the target and actual outputs from the network.
+
 
 Developer install
-^^^^^^^^^^^^^^^^^
-Use this if you want to track the latest changes from the repo:
+-----------------
+
+Use this if you want to track the latest changes from the repository:
 
 .. code-block:: bash
 
@@ -28,7 +42,7 @@ Use this if you want to track the latest changes from the repo:
     python setup.py develop --user
 
 Requirements
-^^^^^^^^^^^^
+------------
 
 * python 2.7
 * numpy 1.9
@@ -38,7 +52,7 @@ Requirements
 (older versions may work, but are untested)
 
 Features
---------
+========
 
 All the standard features of Hessian-free optimization from Martens (2010) and 
 Martens and Sutskever (2011) are implemented (Gauss-Newton approximation, early 
