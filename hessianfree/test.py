@@ -20,7 +20,8 @@ def test_xor():
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1], debug=True, use_GPU=False)
+    ff = FFNet([2, 5, 1], layers=[Linear(), Logistic(), Logistic()],
+               debug=True, use_GPU=False)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -269,9 +270,9 @@ def test_integrator():
     test = (inputs, targets)
 
     rnn = RNNet(shape=[1, 10, 10, 1], struc_damping=0.0,
-                layers=Logistic(), error_type="mse",
+                layers=[Linear(), Logistic(), Logistic(), Logistic()],
                 conns={0: [1, 2], 1: [2], 2: [3]},
-                use_GPU=False, debug=False)
+                error_type="mse", use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(rnn, CG_iter=100),
                     batch_size=None, test=test, max_epochs=100, plotting=True)

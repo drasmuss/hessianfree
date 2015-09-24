@@ -15,7 +15,6 @@ from copy import deepcopy
 import numpy as np
 
 import nonlinearities
-from optimizers import HessianFree
 
 
 class FFNet(object):
