@@ -16,9 +16,9 @@ from hessianfree.optimizers import HessianFree, SGD
 def test_xor():
     """Run a basic xor training test."""
 
-    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]],
                         dtype=np.float32)
-    targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
+    targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 1], debug=True, use_GPU=False)
 
@@ -30,6 +30,7 @@ def test_xor():
 #                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
+        print "-"*20
         print "input", i
         print "target", t
         print "output", ff.forward(i, ff.W)[-1]
