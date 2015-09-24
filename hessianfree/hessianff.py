@@ -15,11 +15,10 @@ from copy import deepcopy
 import numpy as np
 
 import nonlinearities
-from optimizers import HessianFree
 
 
 class FFNet(object):
-    def __init__(self, shape, layers=nonlinearities.Logistic(),
+    def __init__(self, shape, layers=nonlinearities.Tanh(),
                  conns=None, error_type="mse", W_init_params={},
                  use_GPU=False, load_weights=None, debug=False):
         """Initialize the parameters of the network.
