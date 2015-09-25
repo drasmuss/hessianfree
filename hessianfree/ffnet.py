@@ -14,7 +14,7 @@ from copy import deepcopy
 
 import numpy as np
 
-import nonlinearities
+from hessianfree import nonlinearities
 
 
 class FFNet(object):
@@ -141,6 +141,7 @@ class FFNet(object):
         :param test_err: a custom error function to be applied to
             the test data (e.g., classification error)
         :param file_output: output files from the run will use this as a prefix
+            (if None then don't output files)
         """
 
         if self.debug:
@@ -152,7 +153,7 @@ class FFNet(object):
         test_errs = []
         self.best_W = None
         self.best_error = None
-        file_output = "HF" if file_output is None else file_output
+        prefix = "HF" if file_output is None else file_output
         plots = defaultdict(list)
         self.optimizer = optimizer
 
@@ -168,12 +169,6 @@ class FFNet(object):
 
             if not(self.inputs.dtype == self.targets.dtype == np.float32):
                 raise TypeError("Input type must be np.float32")
-
-            if self.use_GPU:
-                self.GPU_activations = [gpuarray.to_gpu(a)
-                                        for a in self.activations]
-            else:
-                self.GPU_activations = None
 
             assert self.activations[-1].dtype == self.dtype
 
@@ -218,11 +213,12 @@ class FFNet(object):
                 if hasattr(optimizer, "plots"):
                     plots.update(optimizer.plots)
 
-                with open("%s_plots.pkl" % file_output, "wb") as f:
+                with open("%s_plots.pkl" % prefix, "wb") as f:
                     pickle.dump(plots, f)
 
             # dump weights
-            np.save("%s_weights.npy" % file_output, self.W)
+            if file_output is not None:
+                np.save("%s_weights.npy" % prefix, self.W)
 
             # check for termination
             if test_errs[-1] < target_err:
@@ -261,6 +257,13 @@ class FFNet(object):
                                                                 deriv=True)
             self.inputs = inputs.get_inputs().astype(np.float32)
             self.targets = inputs.get_targets().astype(np.float32)
+
+        if self.use_GPU:
+            from pycuda import gpuarray
+            self.GPU_activations = [gpuarray.to_gpu(a)
+                                    for a in self.activations]
+        else:
+            self.GPU_activations = None
 
     def forward(self, input, params, deriv=False):
         """Compute feedforward activations for given input and parameters.
@@ -361,7 +364,7 @@ class FFNet(object):
             if l.stateful:
                 raise TypeError("Cannot use neurons with internal state in "
                                 "a one-step feedforward network; use "
-                                "HessianRNN instead.")
+                                "RNNet instead.")
 
         grad = np.zeros_like(self.W)
 
@@ -504,7 +507,7 @@ class FFNet(object):
         G = np.einsum("...ji,...j,...jk->...ik", J, L, J)
         G = np.sum(G, axis=tuple(range(J.ndim - 2)))
         # note: the generic indexing is necessary for compatibility between
-        # hessianff and hessianrnn
+        # ffnet and rnnet
 
         # divide by batch size
         G /= self.inputs.shape[0]

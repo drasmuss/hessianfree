@@ -5,8 +5,7 @@ import ast
 import numpy as np
 import matplotlib.pyplot as plt
 
-from hessianfree.hessianff import FFNet
-from hessianfree.hessianrnn import RNNet
+from hessianfree import FFNet, RNNet
 from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
                                         Continuous, Linear, Nonlinearity,
                                         Gaussian)
@@ -31,7 +30,7 @@ def test_xor():
 #                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
-        print "-"*20
+        print "-" * 20
         print "input", i
         print "target", t
         print "output", ff.forward(i, ff.W)[-1]
@@ -222,7 +221,7 @@ def test_profile():
 
 def test_GPU():
     """Profile CPU vs GPU performance (can be used to adjust the
-    threshold in hessianff.init_GPU)."""
+    threshold in FFNet.init_GPU)."""
 
     import time
 

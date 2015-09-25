@@ -5,6 +5,7 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 def run(filename):
     with open(filename, "rb") as f:
         plots = pickle.load(f)

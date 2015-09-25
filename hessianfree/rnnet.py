@@ -11,7 +11,7 @@ Machine Learning.
 
 import numpy as np
 
-from hessianff import FFNet
+from hessianfree import FFNet
 
 
 class RNNet(FFNet):
