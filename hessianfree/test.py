@@ -22,11 +22,11 @@ def test_xor():
     ff = FFNet([2, 5, 1], layers=[Linear(), Logistic(), Logistic()],
                debug=True, use_GPU=False)
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=2),
+    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(ff, l_rate=1),
+#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
@@ -65,14 +65,14 @@ def test_mnist(model_args=None, run_args=None):
                        np.argmax(targets, axis=-1))
 
     if run_args is None:
-        ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=250,
+        ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=250,
                                                               init_damping=45),
                        batch_size=7500, test=test, max_epochs=1000,
                        plotting=True, test_err=test_err)
     else:
         CG_iter = run_args.pop("CG_iter", 250)
         init_damping = run_args.pop("init_damping", 1)
-        ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter,
+        ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter,
                                                               init_damping),
                        test=test, test_err=test_err,
                        **run_args)
@@ -149,7 +149,7 @@ def test_cifar():
                layers=[Linear()] + [Tanh()] * 4 + [Softmax()],
                error_type="ce", use_GPU=True, debug=False, load_weights=None)
 
-    ff.run_batches(train[0], train[1], optimizer=HessianFree(ff, CG_iter=300),
+    ff.run_batches(train[0], train[1], optimizer=HessianFree(CG_iter=300),
                    batch_size=5000, test=test, max_epochs=1000, plotting=True)
 
     output = ff.forward(test[0], ff.W)[-1]
@@ -169,11 +169,11 @@ def test_softlif():
 
     ff = FFNet([2, 10, 1], layers=lifs, debug=True, use_GPU=False)
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=50),
+    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
                    max_epochs=50, plotting=True)
 
     # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(ff, l_rate=1),
+#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
@@ -192,11 +192,34 @@ def test_crossentropy():
     ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
                debug=True, error_type="ce")
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(ff, CG_iter=2),
+    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(ff, l_rate=1),
+#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
+#                    max_epochs=10000, plotting=True)
+
+    for i, t in zip(inputs, targets):
+        print "input", i
+        print "target", t
+        print "output", ff.forward(i, ff.W)[-1]
+
+
+def test_skip():
+    """Example of a network with non-standard connectivity between layers."""
+
+    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
+                        dtype=np.float32)
+    targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
+
+    ff = FFNet([2, 5, 5, 1], layers=Tanh(), debug=True,
+               conns={0:[1, 2], 1:[2, 3], 2:[3]})
+
+    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
+                   max_epochs=40, plotting=True)
+
+    # using gradient descent (for comparison)
+#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
     for i, t in zip(inputs, targets):
@@ -269,16 +292,15 @@ def test_integrator():
 
     test = (inputs, targets)
 
-    rnn = RNNet(shape=[1, 10, 10, 1], struc_damping=0.0,
-                layers=[Linear(), Logistic(), Logistic(), Logistic()],
-                conns={0: [1, 2], 1: [2], 2: [3]},
+    rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
+                layers=[Linear(), Logistic(), Logistic()],
                 error_type="mse", use_GPU=False, debug=False)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(rnn, CG_iter=100),
+    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     batch_size=None, test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
-#     rnn.run_batches(inputs, targets, optimizer=SGD(rnn, l_rate=0.1),
+#     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
 #                     batch_size=None, test=test, max_epochs=10000,
 #                     plotting=True)
 
@@ -313,15 +335,15 @@ def test_continuous():
 
     test = (inputs, targets)
 
-    rnn = RNNet(shape=[1, 10, 1], struc_damping=0.0,
+    rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
                 layers=[Linear(), nl, Logistic()], error_type="mse",
                 use_GPU=False, debug=False)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(rnn, CG_iter=100),
+    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     batch_size=None, test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
-#     rnn.run_batches(inputs, targets, optimizer=SGD(rnn, l_rate=0.1),
+#     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
 #                     batch_size=None, test=test, max_epochs=10000,
 #                     plotting=True)
 
@@ -406,10 +428,11 @@ def test_plant():
         def get_targets(self):
             return self.targets
 
-        def reset(self):
+        def reset(self, init=None):
             self.act_count = 0
             self.d_act_count = 0
-            self.state = self.init_state.copy()
+            self.state = (self.init_state.copy() if init is None else
+                          init.copy())
 #             self.state = self.init_state[
 #                 np.random.choice(np.arange(len(self.init_state)),
 #                                  size=self.shape[0], replace=False)]
@@ -441,19 +464,19 @@ def test_plant():
     # TODO: why is the test generalization so bad?
     test = None  # (Plant(A, B, targets, init2), None)
 
-    rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=0.0,
+    rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
                 error_type="mse", debug=False,
                 rec_layers=[False, True, True, False],
                 conns={0: [1, 2], 1: [2], 2: [3]},
                 W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
 
-    rnn.run_batches(plant, None, optimizer=HessianFree(rnn, CG_iter=100,
+    rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,
                                                        init_damping=1),
                     batch_size=None, test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
-#     rnn.run_batches(plant, None, optimizer=SGD(rnn, l_rate=0.01),
+#     rnn.run_batches(plant, None, optimizer=SGD(l_rate=0.01),
 #                     batch_size=None, test=test, max_epochs=10000,
 #                     plotting=True)
 

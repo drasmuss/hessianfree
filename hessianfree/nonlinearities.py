@@ -21,7 +21,7 @@ class Nonlinearity(object):
         # compute the derivative for some nonlinearities
         raise NotImplementedError()
 
-    def reset(self):
+    def reset(self, init=None):
         """Reset the nonlinearity to initial conditions."""
 
         pass
@@ -153,7 +153,7 @@ class Continuous(Nonlinearity):
 
         return np.concatenate((d_input, d_state, d_output), axis=-1)
 
-    def reset(self):
-        self.state = 0.0
+    def reset(self, init=None):
+        self.state = 0.0 if init is None else init.copy()
         self.act_count = 0
         self.d_act_count = 0

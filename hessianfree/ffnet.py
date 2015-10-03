@@ -504,10 +504,7 @@ class FFNet(object):
         L = self.loss[2](self.activations[-1], self.targets)
         # TODO: check self.loss[2] via finite differences
 
-        G = np.einsum("...ji,...j,...jk->...ik", J, L, J)
-        G = np.sum(G, axis=tuple(range(J.ndim - 2)))
-        # note: the generic indexing is necessary for compatibility between
-        # ffnet and rnnet
+        G = np.einsum("aji,aj,ajk->ik", J, L, J)
 
         # divide by batch size
         G /= self.inputs.shape[0]
@@ -787,3 +784,12 @@ class FFNet(object):
             return out
 
         self.outer_sum = outer_sum
+
+    @property
+    def optimizer(self):
+        return self._optimizer
+
+    @optimizer.setter
+    def optimizer(self, o):
+        self._optimizer = o
+        o.net = self

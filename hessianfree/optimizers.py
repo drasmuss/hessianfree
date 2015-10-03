@@ -6,13 +6,13 @@ import numpy as np
 class Optimizer(object):
     # note: optimizers don't actually need to inherit from this class, this
     # just demonstrates the minimum structure that is expected
-    def __init__(self, network):
+    def __init__(self):
         """Initialize the optimizer with whatever parameters are appropriate.
 
-        :param network: the network that will be optimized (instance of
-            FFNet or RNNet)
         """
-        self.net = network
+
+        # the network will be set when the optimizer is added to a network
+        self.net = None
 
     def compute_update(self, printing=False):
         """Compute a weight update for the current batch.
@@ -27,7 +27,7 @@ class Optimizer(object):
 
 
 class HessianFree(Optimizer):
-    def __init__(self, network, CG_iter=250, init_damping=1,
+    def __init__(self, CG_iter=250, init_damping=1,
                  struc_damping=None, plotting=True):
         """Use Hessian-free optimization to compute the weight update.
 
@@ -43,9 +43,9 @@ class HessianFree(Optimizer):
             plotting handled in parent network)
         """
 
-        super(HessianFree, self).__init__(network)
+        super(HessianFree, self).__init__()
         self.CG_iter = CG_iter
-        self.init_delta = np.zeros_like(network.W)
+        self.init_delta = None
         self.damping = init_damping
         self._struc_damping = struc_damping
 
@@ -63,6 +63,8 @@ class HessianFree(Optimizer):
             print "grad norm", np.linalg.norm(grad)
 
         # run CG
+        if self.init_delta is None:
+            self.init_delta = np.zeros_like(self.net.W)
         deltas = self.conjugate_gradient(self.init_delta * 0.95, grad,
                                          iters=self.CG_iter)
 
@@ -228,7 +230,7 @@ class HessianFree(Optimizer):
 
 
 class SGD(Optimizer):
-    def __init__(self, network, l_rate=1, plotting=False):
+    def __init__(self, l_rate=1, plotting=False):
         """Compute weight update using first-order gradient descent.
 
         :param l_rate: learning rate to apply to weight updates
@@ -236,7 +238,7 @@ class SGD(Optimizer):
             plotting handled in parent network)
         """
 
-        super(SGD, self).__init__(network)
+        super(SGD, self).__init__()
 
         self.l_rate = l_rate
 
