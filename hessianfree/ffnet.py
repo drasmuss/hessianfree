@@ -96,23 +96,30 @@ class FFNet(object):
                     raise ValueError("Can only connect from lower to higher "
                                      " layers (%s >= %s)" % (pre, post))
 
+        # compute indices for the different connection weight matrices in the
+        # overall parameter vector
+        self.compute_offsets()
+
         # initialize connection weights
-        if load_weights is not None:
+        if load_weights is None:
+            self.W = self.init_weights(
+                [(self.shape[pre], self.shape[post])
+                 for pre in self.conns for post in self.conns[pre]],
+                **W_init_params)
+        else:
             if isinstance(load_weights, np.ndarray):
                 self.W = load_weights
             else:
                 # load weights from file
                 self.W = np.load(load_weights)
+
+            if len(self.W) != np.max(self.offsets.values()):
+                raise IndexError("Length of loaded weights does not "
+                                 "match expected length")
+
             if self.W.dtype != self.dtype:
                 raise TypeError("Loaded weights (%s) don't match "
                                 "self.dtype (%s)" % (self.W.dtype, self.dtype))
-        else:
-            self.W = self.init_weights(
-                [(self.shape[pre], self.shape[post])
-                 for pre in self.conns for post in self.conns[pre]],
-                **W_init_params)
-
-        self.compute_offsets()
 
         # initialize GPU
         if use_GPU:
@@ -185,7 +192,7 @@ class FFNet(object):
             # TODO: maybe don't compute test error every iteration?
             # compute test error
             if test is None:
-                test_in, test_t = inputs, targets
+                test_in, test_t = self.inputs, self.targets
             else:
                 test_in, test_t = test[0], test[1]
 
