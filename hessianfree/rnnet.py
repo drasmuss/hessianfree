@@ -178,42 +178,38 @@ class RNNet(FFNet):
             for s in np.arange(n, np.maximum(n - trunc_len, -1), -1):
                 # execute trunc_len steps of backprop through time
 
-                for l in np.arange(self.n_layers - 1, -1, -1):
-                    if l == self.n_layers - 1:
-                        # derivative of loss
-                        error = self.loss[1](self.activations[-1][:, s],
-                                             self.targets[:, s])
-                    else:
-                        # error from feedforward weights
-                        error = np.zeros_like(deltas[l])
-                        for post in self.conns[l]:
-                            c_error = np.dot(deltas[post],
-                                             self.get_weights(self.W,
-                                                              (l, post))[0].T)
-                            error += c_error
+                error = self.loss.d_loss([a[:, s] for a in self.activations],
+                                         self.targets[:, s])
 
-                            # feedforward gradient
-                            offset, W_end, b_end = self.offsets[(l, post)]
-                            grad[offset:W_end] += self.outer_sum(
-                                self.activations[l][:, s]
-                                if self.GPU_activations is None else
-                                [l, np.index_exp[:, s]], deltas[post])
-                            grad[W_end:b_end] += np.sum(deltas[post], axis=0)
+                for l in np.arange(self.n_layers - 1, -1, -1):
+                    for post in self.conns[l]:
+                        c_error = np.dot(deltas[post],
+                                         self.get_weights(self.W,
+                                                          (l, post))[0].T)
+                        error[l] += c_error
+
+                        # feedforward gradient
+                        offset, W_end, b_end = self.offsets[(l, post)]
+                        grad[offset:W_end] += self.outer_sum(
+                            self.activations[l][:, s]
+                            if self.GPU_activations is None else
+                            [l, np.index_exp[:, s]], deltas[post])
+                        grad[W_end:b_end] += np.sum(deltas[post], axis=0)
 
                     # add recurrent error
                     if self.rec_layers[l]:
-                        error += np.dot(deltas[l], W_recs[l][0].T)
+                        error[l] += np.dot(deltas[l], W_recs[l][0].T)
 
                     # compute deltas
                     if not self.layers[l].stateful:
                         deltas[l] = self.J_dot(self.d_activations[l][:, s],
-                                               error, transpose=True)
+                                               error[l], transpose=True)
                     else:
                         d_input = self.d_activations[l][:, s, ..., 0]
                         d_state = self.d_activations[l][:, s, ..., 1]
                         d_output = self.d_activations[l][:, s, ..., 2]
 
-                        state_deltas[l] += self.J_dot(d_output, error,
+                        state_deltas[l] += self.J_dot(d_output, error[l],
                                                       transpose=True)
                         deltas[l] = self.J_dot(d_input, state_deltas[l],
                                                transpose=True)
@@ -251,8 +247,6 @@ class RNNet(FFNet):
 
         inc_W = np.zeros_like(self.W)
 
-
-
         for n in np.arange(trunc_per, sig_len + 1, trunc_per):
             start = np.maximum(n - trunc_len, 0)
 
@@ -280,11 +274,13 @@ class RNNet(FFNet):
                                        init_activations=init_a,
                                        init_state=init_s)
 
-                error_inc = self.loss[0](out_inc[-1], self.targets[:, start:n])
-                error_inc = np.sum(error_inc) / len(error_inc)
+                error_inc = self.loss.loss(out_inc, self.targets[:, start:n])
+                error_inc = np.sum([np.sum(e) / self.inputs.shape[0]
+                                    for e in error_inc])
 
-                error_dec = self.loss[0](out_dec[-1], self.targets[:, start:n])
-                error_dec = np.sum(error_dec) / len(error_dec)
+                error_dec = self.loss.loss(out_dec, self.targets[:, start:n])
+                error_dec = np.sum([np.sum(e) / self.inputs.shape[0]
+                                    for e in error_dec])
 
                 grad[i] += (error_inc - error_dec) / (2 * eps)
 
@@ -369,41 +365,39 @@ class RNNet(FFNet):
                         for i, l in enumerate(self.layers)]
 
             for s in np.arange(n, np.maximum(n - trunc_len, -1), -1):
+                R_error = self.loss.d2_loss([a[:, s]
+                                             for a in self.activations],
+                                            self.targets[:, s])
                 for l in np.arange(self.n_layers - 1, -1, -1):
-                    if l == self.n_layers - 1:
-                        # output layer
-                        R_error = (R_activations[-1][:, s] *
-                                   self.loss[2](self.activations[l][:, s],
-                                                self.targets[:, s]))
-                    else:
-                        # error from feedforward connections
-                        R_error = np.zeros_like(self.activations[l][:, s])
-                        for post in self.conns[l]:
-                            W, _ = self.get_weights(self.W, (l, post))
-                            R_error += np.dot(R_deltas[post], W.T)
+                    R_error[l] *= R_activations[l][:, s]
 
-                            # feedforward gradient
-                            offset, W_end, b_end = self.offsets[(l, post)]
-                            Gv[offset:W_end] += self.outer_sum(
-                                self.activations[l][:, s]
-                                if self.GPU_activations is None else
-                                [l, np.index_exp[:, s]], R_deltas[post])
-                            Gv[W_end:b_end] += np.sum(R_deltas[post], axis=0)
+                    # error from feedforward connections
+                    for post in self.conns[l]:
+                        W, _ = self.get_weights(self.W, (l, post))
+                        R_error[l] += np.dot(R_deltas[post], W.T)
+
+                        # feedforward gradient
+                        offset, W_end, b_end = self.offsets[(l, post)]
+                        Gv[offset:W_end] += self.outer_sum(
+                            self.activations[l][:, s]
+                            if self.GPU_activations is None else
+                            [l, np.index_exp[:, s]], R_deltas[post])
+                        Gv[W_end:b_end] += np.sum(R_deltas[post], axis=0)
 
                     # add recurrent error
                     if self.rec_layers[l]:
-                        R_error += np.dot(R_deltas[l], W_recs[l][0].T)
+                        R_error[l] += np.dot(R_deltas[l], W_recs[l][0].T)
 
                     # compute deltas
                     if not self.layers[l].stateful:
                         R_deltas[l] = self.J_dot(self.d_activations[l][:, s],
-                                                 R_error, transpose=True)
+                                                 R_error[l], transpose=True)
                     else:
                         d_input = self.d_activations[l][:, s, ..., 0]
                         d_state = self.d_activations[l][:, s, ..., 1]
                         d_output = self.d_activations[l][:, s, ..., 2]
 
-                        R_states[l] += self.J_dot(d_output, R_error,
+                        R_states[l] += self.J_dot(d_output, R_error[l],
                                                   transpose=True)
                         R_deltas[l] = self.J_dot(d_input, R_states[l],
                                                  transpose=True)
@@ -413,6 +407,8 @@ class RNNet(FFNet):
                     # apply structural damping
                     struc_damping = getattr(self.optimizer, "struc_damping",
                                             None)
+                    # TODO: could we just define struc_damping as a loss
+                    # function instead?
                     if struc_damping is not None and self.rec_layers[l]:
                         # penalize change in the output w.r.t. input (which is
                         # what R_activations represents)
@@ -490,7 +486,6 @@ class RNNet(FFNet):
             trunc_per, trunc_len = self.truncation
 
         G = np.zeros((len(self.W), len(self.W)))
-        Gv = np.zeros(len(self.W))
 
         for n in np.arange(trunc_per, sig_len + 1, trunc_per):
             start = np.maximum(n - trunc_len, 0)
@@ -502,9 +497,10 @@ class RNNet(FFNet):
             trunc_J = self.calc_J(start, n) if start > 0 else J
 
             # second derivative of loss function
-            L = self.loss[2](self.activations[-1][:, :n],
-                             self.targets[:, :n])
-            # TODO: check self.loss[2] via finite differences
+            # TODO: get this to work with non-output losses
+            L = self.loss.d2_loss([a[:, :n] for a in self.activations],
+                                  self.targets[:, :n])[-1]
+            # TODO: check loss via finite differences
 
             G += np.einsum("abji,abj,abjk->ik", trunc_J, L, J)
 

@@ -44,7 +44,7 @@ def test_mnist(model_args=None, run_args=None):
         train, _, test = pickle.load(f)
 
     if model_args is None:
-        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10], error_type="mse",
+        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10], loss_type="se",
                    layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
                    use_GPU=True, debug=False)
     else:
@@ -147,7 +147,7 @@ def test_cifar():
 
     ff = FFNet([dim * dim * 3, 1024, 512, 256, 32, 10],
                layers=[Linear()] + [Tanh()] * 4 + [Softmax()],
-               error_type="ce", use_GPU=True, debug=False, load_weights=None)
+               loss_type="ce", use_GPU=True, debug=False, load_weights=None)
 
     ff.run_batches(train[0], train[1], optimizer=HessianFree(CG_iter=300),
                    batch_size=5000, test=test, max_epochs=1000, plotting=True)
@@ -190,7 +190,7 @@ def test_crossentropy():
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
-               debug=True, error_type="ce")
+               debug=True, loss_type="ce")
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -213,7 +213,7 @@ def test_skip():
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 5, 1], layers=Tanh(), debug=True,
-               conns={0:[1, 2], 1:[2, 3], 2:[3]})
+               conns={0: [1, 2], 1: [2, 3], 2: [3]})
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -294,7 +294,7 @@ def test_integrator():
 
     rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
                 layers=[Linear(), Logistic(), Logistic()],
-                error_type="mse", use_GPU=False, debug=False)
+                loss_type="se", use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     batch_size=None, test=test, max_epochs=100, plotting=True)
@@ -336,7 +336,7 @@ def test_continuous():
     test = (inputs, targets)
 
     rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
-                layers=[Linear(), nl, Logistic()], error_type="mse",
+                layers=[Linear(), nl, Logistic()], loss_type="se",
                 use_GPU=False, debug=False)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
@@ -457,7 +457,7 @@ def test_plant():
         return B, d_B
 
     init1 = np.random.uniform(-1, 1, size=(n_inputs, 2))
-    init2 = np.random.uniform(-1, 1, size=(n_inputs, 2))
+#     init2 = np.random.uniform(-1, 1, size=(n_inputs, 2))
 
     plant = Plant(A, B, targets, init1)
 
@@ -466,7 +466,7 @@ def test_plant():
 
     rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
-                error_type="mse", debug=False,
+                loss_type="se", debug=False,
                 rec_layers=[False, True, True, False],
                 conns={0: [1, 2], 1: [2], 2: [3]},
                 W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
@@ -508,4 +508,4 @@ if __name__ == "__main__":
             locals()["test_%s" % sys.argv[1]](*[ast.literal_eval(a)
                                                 for a in sys.argv[2:]])
         else:
-            print "Unknown function (%s)" % sys.argv[1]
+            print "Unknown test function (%s)" % sys.argv[1]

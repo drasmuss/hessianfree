@@ -47,7 +47,8 @@ Requirements
 * python 2.7
 * numpy 1.9
 * scipy 0.15 
-* optional: matplotlib 1.4, pycuda 2014
+* matplotlib 1.4
+* optional: pycuda 2014
 
 (older versions may work, but are untested)
 

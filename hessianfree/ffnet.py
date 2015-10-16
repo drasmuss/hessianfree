@@ -14,12 +14,12 @@ from copy import deepcopy
 
 import numpy as np
 
-from hessianfree import nonlinearities
+from hessianfree import nonlinearities, loss_funcs
 
 
 class FFNet(object):
     def __init__(self, shape, layers=nonlinearities.Logistic(),
-                 conns=None, error_type="mse", W_init_params={},
+                 conns=None, loss_type="se", W_init_params={},
                  use_GPU=False, load_weights=None, debug=False):
         """Initialize the parameters of the network.
 
@@ -29,8 +29,9 @@ class FFNet(object):
         :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
             specifying the connections between layers (default is to connect in
             series)
-        :param error_type: type of loss function (mse, ce, or custom)
-        :param W_init_params: parameter dict passed to init_weights (see
+        :param loss_type: type of loss function ('se', 'ce', or see
+            loss_funcs.py)
+        :param W_init_params: parameter dict passed to init_weights() (see
             parameter descriptions in that function)
         :param use_GPU: run certain operations on GPU to speed them up
             (requires PyCUDA to be installed)
@@ -71,7 +72,7 @@ class FFNet(object):
             self.layers += [t]
 
         # initialize loss function
-        self.init_loss(error_type)
+        self.init_loss(loss_type)
 
         # initialize connections
         if conns is None:
@@ -80,6 +81,10 @@ class FFNet(object):
             for pre, post in zip(np.arange(self.n_layers - 1),
                                  np.arange(1, self.n_layers)):
                 conns[pre] = [post]
+
+        # add empty connection for last layer (just helps smooth the code
+        # elsewhere)
+        conns[self.n_layers - 1] = []
 
         self.conns = OrderedDict(sorted(conns.items(), key=lambda x: x[0]))
         # note: conns is an ordered dict sorted by layer so that we can
@@ -324,10 +329,10 @@ class FFNet(object):
         if (W is self.W and inputs is self.inputs and
                 self.activations is not None):
             # use cached activations
-            outputs = self.activations[-1]
+            activations = self.activations
         else:
             # compute activations
-            outputs = self.forward(inputs, W)[-1]
+            activations = self.forward(inputs, W)
 
         # get targets
         if callable(inputs):
@@ -341,10 +346,10 @@ class FFNet(object):
         # zero error in the loss function.
 
         # we don't want to confuse nan outputs with nan targets
-        assert np.all(np.isfinite(outputs))
+        assert np.all(np.isfinite(activations[-1]))
 
-        error = self.loss[0](outputs, targets)
-        error = np.sum(error) / len(outputs)
+        error = self.loss.loss(activations, targets)
+        error = np.sum([np.sum(e) / inputs.shape[0] for e in error])
 
         return error
 
@@ -375,21 +380,21 @@ class FFNet(object):
 
         grad = np.zeros_like(self.W)
 
+        # backpropagation
         # note: this uses the cached activations, so the forward
         # pass has already been run elsewhere
 
-        # backpropagate error
-        error = self.loss[1](self.activations[-1], self.targets)
+        # compute output error for each layer
+        error = self.loss.d_loss(self.activations, self.targets)
 
         deltas = [None for _ in range(self.n_layers)]
-        deltas[-1] = self.J_dot(self.d_activations[-1], error)
 
-        for i in range(self.n_layers - 2, -1, -1):
-            error = np.zeros_like(self.activations[i])
+        # backwards pass
+        for i in range(self.n_layers - 1, -1, -1):
             for post in self.conns[i]:
                 c_error = np.dot(deltas[post],
                                  self.get_weights(self.W, (i, post))[0].T)
-                error += c_error
+                error[i] += c_error
 
                 offset, W_end, b_end = self.offsets[(i, post)]
                 grad[offset:W_end] = self.outer_sum(
@@ -397,7 +402,7 @@ class FFNet(object):
                     else [i], deltas[post])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
-            deltas[i] = self.J_dot(self.d_activations[i], error)
+            deltas[i] = self.J_dot(self.d_activations[i], error[i])
 
         grad /= self.inputs.shape[0]
 
@@ -452,16 +457,15 @@ class FFNet(object):
         R_deltas = [None for _ in range(self.n_layers)]
 
         # multiply by second derivative of loss function
-        R_error = R_activations[-1] * self.loss[2](self.activations[-1],
-                                                   self.targets)
+        R_error = self.loss.d2_loss(self.activations, self.targets)
 
-        R_deltas[-1] = self.J_dot(self.d_activations[-1], R_error)
+        for i in range(self.n_layers - 1, -1, -1):
+            # TODO: multiply all layers by R_activation?
+            R_error[i] *= R_activations[i]
 
-        for i in range(self.n_layers - 2, -1, -1):
-            R_error = np.zeros_like(self.activations[i])
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.W, (i, post))
-                R_error += np.dot(R_deltas[post], W.T)
+                R_error[i] += np.dot(R_deltas[post], W.T)
 
                 offset, W_end, b_end = self.offsets[(i, post)]
                 Gv[offset:W_end] = self.outer_sum(
@@ -469,7 +473,7 @@ class FFNet(object):
                     else [i], R_deltas[post])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
 
-            R_deltas[i] = self.J_dot(self.d_activations[i], R_error)
+            R_deltas[i] = self.J_dot(self.d_activations[i], R_error[i])
 
         Gv /= len(self.inputs)
 
@@ -508,8 +512,9 @@ class FFNet(object):
         J = self.calc_J()
 
         # second derivative of loss function
-        L = self.loss[2](self.activations[-1], self.targets)
-        # TODO: check self.loss[2] via finite differences
+        # TODO: get this check to work with non-output losses
+        L = self.loss.d2_loss(self.activations, self.targets)[-1]
+        # TODO: check loss via finite differences
 
         G = np.einsum("aji,aj,ajk->ik", J, L, J)
 
@@ -626,46 +631,26 @@ class FFNet(object):
                                                  self.shape[conn[1]]))
 
     def init_loss(self, loss_type):
+        if loss_type == "se":
+            self.loss = loss_funcs.SquaredError()
+        elif loss_type == "ce":
+            self.loss = loss_funcs.CrossEntropy()
+        elif isinstance(loss_type, loss_funcs.LossFunction):
+            self.loss = loss_type
+        else:
+            raise ValueError("Unknown loss type (%s)" % loss_type)
+
         # sanity checks
-        if (loss_type == "ce" and
+        if (isinstance(self.loss, loss_funcs.CrossEntropy) and
             np.any(self.layers[-1].activation(np.linspace(-80, 80,
                                                           100)[None, :])
                    <= 0)):
             # this won't catch everything, but hopefully a useful warning
             raise ValueError("Must use positive activation function"
                              " with cross-entropy error")
-        if loss_type == "ce" and not isinstance(self.layers[-1],
-                                                 nonlinearities.Softmax):
+        if (isinstance(self.loss, loss_funcs.CrossEntropy) and
+                not isinstance(self.layers[-1], nonlinearities.Softmax)):
             print "Softmax should probably be used with cross-entropy error"
-
-        # create functions for loss function and first/second derivative
-        if loss_type == "mse":
-            def loss(outputs, targets):
-                return np.sum(np.nan_to_num(outputs - targets) ** 2,
-                               axis=tuple(range(1, outputs.ndim))) / 2
-
-            def d_loss(outputs, targets):
-                return np.nan_to_num(outputs - targets)
-
-            def d2_loss(outputs, targets):
-                return np.ones_like(outputs)
-        elif loss_type == "ce":
-            def loss(outputs, targets):
-                return -np.sum(np.nan_to_num(targets) * np.log(outputs),
-                               axis=tuple(range(1, outputs.ndim)))
-
-            def d_loss(outputs, targets):
-                return -np.nan_to_num(targets) / outputs
-
-            def d2_loss(outputs, targets):
-                return np.nan_to_num(targets) / outputs ** 2
-        elif isinstance(loss_type, (list, tuple)):
-            # user specified loss function
-            loss, d_loss, d2_loss = loss_type
-        else:
-            raise ValueError("Unknown error type (%s)" % loss_type)
-
-        self.loss = (loss, d_loss, d2_loss)
 
     def init_GPU(self):
         try:
