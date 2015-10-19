@@ -18,8 +18,8 @@ from hessianfree import nonlinearities, loss_funcs
 
 
 class FFNet(object):
-    def __init__(self, shape, layers=nonlinearities.Logistic(),
-                 conns=None, loss_type="se", W_init_params={},
+    def __init__(self, shape, layers=nonlinearities.Logistic(), conns=None,
+                 loss_type=loss_funcs.SquaredError(), W_init_params={},
                  use_GPU=False, load_weights=None, debug=False):
         """Initialize the parameters of the network.
 
@@ -29,7 +29,7 @@ class FFNet(object):
         :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
             specifying the connections between layers (default is to connect in
             series)
-        :param loss_type: type of loss function ('se', 'ce', or see
+        :param loss_type: loss function used to evaluate network (see
             loss_funcs.py)
         :param W_init_params: parameter dict passed to init_weights() (see
             parameter descriptions in that function)
@@ -285,9 +285,6 @@ class FFNet(object):
 
         if callable(input):
             input.reset()
-        elif input.ndim < 2:
-            # then we've just been given a single sample (rather than batch)
-            input = input[None, :]
 
         activations = [None for _ in range(self.n_layers)]
         if deriv:
@@ -349,6 +346,8 @@ class FFNet(object):
         assert np.all(np.isfinite(activations[-1]))
 
         error = self.loss.loss(activations, targets)
+
+        # take mean across batches and sum over layers
         error = np.sum([np.sum(e) / inputs.shape[0] for e in error])
 
         return error
@@ -413,14 +412,12 @@ class FFNet(object):
 
         eps = 1e-6
         grad = np.zeros(calc_grad.shape)
-        for i, val in enumerate(self.W):
-            inc_W = np.copy(self.W)
-            dec_W = np.copy(self.W)
-            inc_W[i] = val + eps
-            dec_W[i] = val - eps
+        for i in range(len(self.W)):
+            inc_W = np.zeros_like(self.W)
+            inc_W[i] = eps
 
-            error_inc = self.error(inc_W, self.inputs, self.targets)
-            error_dec = self.error(dec_W, self.inputs, self.targets)
+            error_inc = self.error(self.W + inc_W, self.inputs, self.targets)
+            error_dec = self.error(self.W - inc_W, self.inputs, self.targets)
             grad[i] = (error_inc - error_dec) / (2 * eps)
         try:
             assert np.allclose(calc_grad, grad, rtol=1e-3)
@@ -481,27 +478,27 @@ class FFNet(object):
 
         return Gv
 
-    def calc_J(self):
+    def check_J(self):
         """Compute the Jacobian of the network via finite differences."""
 
         eps = 1e-6
         N = self.W.size
 
         # compute the Jacobian
-        J = None
+        J = [None for _ in self.layers]
         for i in range(N):
             inc_i = np.zeros(N)
             inc_i[i] = eps
 
-            inc = self.forward(self.inputs,
-                               self.W + inc_i)[-1]
-            dec = self.forward(self.inputs,
-                               self.W - inc_i)[-1]
-            J_i = (inc - dec) / (2 * eps)
-            if J is None:
-                J = J_i[..., None]
-            else:
-                J = np.concatenate((J, J_i[..., None]), axis=-1)
+            inc = self.forward(self.inputs, self.W + inc_i)
+            dec = self.forward(self.inputs, self.W - inc_i)
+
+            for l in range(self.n_layers):
+                J_i = (inc[l] - dec[l]) / (2 * eps)
+                if J[l] is None:
+                    J[l] = J_i[..., None]
+                else:
+                    J[l] = np.concatenate((J[l], J_i[..., None]), axis=-1)
 
         return J
 
@@ -509,14 +506,14 @@ class FFNet(object):
         """Check Gv calculation via finite differences (for debugging)."""
 
         # compute Jacobian
-        J = self.calc_J()
+        J = self.check_J()
 
         # second derivative of loss function
-        # TODO: get this check to work with non-output losses
-        L = self.loss.d2_loss(self.activations, self.targets)[-1]
+        L = self.loss.d2_loss(self.activations, self.targets)
         # TODO: check loss via finite differences
 
-        G = np.einsum("aji,aj,ajk->ik", J, L, J)
+        G = np.sum([np.einsum("aji,aj,ajk->ik", J[l], L[l], J[l])
+                    for l in range(self.n_layers)], axis=0)
 
         # divide by batch size
         G /= self.inputs.shape[0]
@@ -631,14 +628,10 @@ class FFNet(object):
                                                  self.shape[conn[1]]))
 
     def init_loss(self, loss_type):
-        if loss_type == "se":
-            self.loss = loss_funcs.SquaredError()
-        elif loss_type == "ce":
-            self.loss = loss_funcs.CrossEntropy()
-        elif isinstance(loss_type, loss_funcs.LossFunction):
-            self.loss = loss_type
-        else:
-            raise ValueError("Unknown loss type (%s)" % loss_type)
+        if not isinstance(loss_type, loss_funcs.LossFunction):
+            raise TypeError("loss_type must be an instance of LossFunction")
+
+        self.loss = loss_type
 
         # sanity checks
         if (isinstance(self.loss, loss_funcs.CrossEntropy) and

@@ -76,9 +76,6 @@ class RNNet(FFNet):
             # reset the plant
             # TODO: allow the initial state of plant to be set?
             input.reset()
-        elif input.ndim < 3:
-            # then we've just been given a single sample (rather than batch)
-            input = input[None, ...]
 
         activations = [np.zeros((input.shape[0], input.shape[1], l),
                                 dtype=self.dtype)
@@ -431,7 +428,7 @@ class RNNet(FFNet):
 
         return Gv
 
-    def calc_J(self, start=0, stop=None):
+    def check_J(self, start=0, stop=None):
         """Compute the Jacobian of the network via finite differences."""
 
         eps = 1e-6
@@ -454,25 +451,26 @@ class RNNet(FFNet):
             stop = self.inputs.shape[1]
 
         # compute the Jacobian
-        J = None
+        J = [None for _ in self.layers]
         for i in range(N):
             inc_i = np.zeros(N)
             inc_i[i] = eps
 
             inc = self.forward(self.inputs[:, start:stop], self.W + inc_i,
-                               init_activations=init_a, init_state=init_s)[-1]
+                               init_activations=init_a, init_state=init_s)
             dec = self.forward(self.inputs[:, start:stop], self.W - inc_i,
-                               init_activations=init_a, init_state=init_s)[-1]
+                               init_activations=init_a, init_state=init_s)
 
             if start > 0:
                 inc = np.concatenate((prev[-1], inc), axis=1)
                 dec = np.concatenate((prev[-1], dec), axis=1)
 
-            J_i = (inc - dec) / (2 * eps)
-            if J is None:
-                J = J_i[..., None]
-            else:
-                J = np.concatenate((J, J_i[..., None]), axis=-1)
+            for l in range(self.n_layers):
+                J_i = (inc[l] - dec[l]) / (2 * eps)
+                if J[l] is None:
+                    J[l] = J_i[..., None]
+                else:
+                    J[l] = np.concatenate((J[l], J_i[..., None]), axis=-1)
 
         return J
 
@@ -493,16 +491,16 @@ class RNNet(FFNet):
             # compute Jacobian
             # note that we do a full forward pass and a partial backwards
             # pass, so we only truncate the backwards J matrix
-            J = self.calc_J(0, n)
-            trunc_J = self.calc_J(start, n) if start > 0 else J
+            J = self.check_J(0, n)
+            trunc_J = self.check_J(start, n) if start > 0 else J
 
             # second derivative of loss function
-            # TODO: get this to work with non-output losses
             L = self.loss.d2_loss([a[:, :n] for a in self.activations],
-                                  self.targets[:, :n])[-1]
+                                  self.targets[:, :n])
             # TODO: check loss via finite differences
 
-            G += np.einsum("abji,abj,abjk->ik", trunc_J, L, J)
+            G += np.sum([np.einsum("abji,abj,abjk->ik", trunc_J[l], L[l], J[l])
+                         for l in range(self.n_layers)], axis=0)
 
         # divide by batch size
         G /= self.inputs.shape[0]

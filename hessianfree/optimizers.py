@@ -8,10 +8,10 @@ class Optimizer(object):
     # just demonstrates the minimum structure that is expected
     def __init__(self):
         """Initialize the optimizer with whatever parameters are appropriate.
-
         """
 
-        # the network will be set when the optimizer is added to a network
+        # the network will be set automatically when the optimizer is added to
+        # a network
         self.net = None
 
     def compute_update(self, printing=False):

@@ -65,8 +65,8 @@ optimization process.
 * Works for feedforward and recurrent deep networks (or mixtures of the two)
 * Standard nonlinearities built in (e.g., logistic, tanh, ReLU, softmax), and 
   support for custom nonlinearities
-* Standard loss functions (squared error, cross entropy), support for custom 
-  loss functions and test error functions (e.g., categorization error)
+* Standard loss functions (squared error, cross entropy, sparsity constraints), 
+  and support for custom loss functions
 * Various weight initialization methods (although Hessian-free optimization 
   doesn't usually require much tweaking)
 * Customizable connectivity between layers (e.g., skip connections)

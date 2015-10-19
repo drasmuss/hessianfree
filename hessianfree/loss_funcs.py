@@ -72,3 +72,51 @@ class CrossEntropy(LossFunction):
 # TODO: categorization error
 
 
+class Sparse(LossFunction):
+    def __init__(self, base, weight, layers=None, target=0.0):
+        """Imposes L1 sparsity constraint on top of the base loss function.
+
+        :param base: loss function defining error in terms of target output
+        :param weight: relative weight of sparsity compared to target loss
+            (1.0 would give an equal weighting)
+        :param layers: list of integers specifying which layers will have the
+            sparsity constraint imposed (if None, will be applied to all
+            except first/last layers)
+        :param target: target activation level for nonlinearities
+        """
+
+        self.base = base
+        self.weight = weight
+        self.layers = layers
+        self.target = target
+
+    def loss(self, activities, targets):
+        if self.layers is None:
+            layers = np.arange(1, len(activities) - 1)
+        else:
+            layers = self.layers
+
+        loss = self.base.loss(activities, targets)
+
+        for l in layers:
+            loss[l] += self.weight * np.abs(activities[l] - self.target)
+
+        return loss
+
+    def d_loss(self, activities, targets):
+        if self.layers is None:
+            layers = np.arange(1, len(activities) - 1)
+        else:
+            layers = self.layers
+
+        d_loss = self.base.d_loss(activities, targets)
+
+        for l in layers:
+            d_loss[l] += self.weight * ((activities[l] > self.target) * 2 - 1)
+
+        return d_loss
+
+    def d2_loss(self, activities, targets):
+        # second derivative is zero
+
+        return self.base.d2_loss(activities, targets)

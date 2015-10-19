@@ -10,17 +10,16 @@ from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
                                         Continuous, Linear, Nonlinearity,
                                         Gaussian)
 from hessianfree.optimizers import HessianFree, SGD
+from hessianfree.loss_funcs import Sparse, SquaredError, CrossEntropy
 
 
 def test_xor():
     """Run a basic xor training test."""
 
-    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]],
-                        dtype=np.float32)
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1], layers=[Linear(), Logistic(), Logistic()],
-               debug=True, use_GPU=False)
+    ff = FFNet([2, 5, 1], debug=True)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -29,11 +28,12 @@ def test_xor():
 #     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
-    for i, t in zip(inputs, targets):
+    outputs = ff.forward(inputs, ff.W)[-1]
+    for i in range(4):
         print "-" * 20
-        print "input", i
-        print "target", t
-        print "output", ff.forward(i, ff.W)[-1]
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", outputs[i]
 
 
 def test_mnist(model_args=None, run_args=None):
@@ -44,7 +44,7 @@ def test_mnist(model_args=None, run_args=None):
         train, _, test = pickle.load(f)
 
     if model_args is None:
-        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10], loss_type="se",
+        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10],
                    layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
                    use_GPU=True, debug=False)
     else:
@@ -147,7 +147,8 @@ def test_cifar():
 
     ff = FFNet([dim * dim * 3, 1024, 512, 256, 32, 10],
                layers=[Linear()] + [Tanh()] * 4 + [Softmax()],
-               loss_type="ce", use_GPU=True, debug=False, load_weights=None)
+               loss_type=CrossEntropy(), use_GPU=True, debug=False,
+               load_weights=None)
 
     ff.run_batches(train[0], train[1], optimizer=HessianFree(CG_iter=300),
                    batch_size=5000, test=test, max_epochs=1000, plotting=True)
@@ -167,7 +168,7 @@ def test_softlif():
                         dtype=np.float32)
     targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
 
-    ff = FFNet([2, 10, 1], layers=lifs, debug=True, use_GPU=False)
+    ff = FFNet([2, 10, 1], layers=lifs, debug=True)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
                    max_epochs=50, plotting=True)
@@ -176,10 +177,12 @@ def test_softlif():
 #     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
-    for i, t in zip(inputs, targets):
-        print "input", i
-        print "target", t
-        print "output", ff.forward(i, ff.W)[-1]
+    outputs = ff.forward(inputs, ff.W)[-1]
+    for i in range(4):
+        print "-" * 20
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", outputs[i]
 
 
 def test_crossentropy():
@@ -190,7 +193,7 @@ def test_crossentropy():
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
-               debug=True, loss_type="ce")
+               debug=True, loss_type=CrossEntropy())
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -199,10 +202,12 @@ def test_crossentropy():
 #     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
-    for i, t in zip(inputs, targets):
-        print "input", i
-        print "target", t
-        print "output", ff.forward(i, ff.W)[-1]
+    outputs = ff.forward(inputs, ff.W)[-1]
+    for i in range(4):
+        print "-" * 20
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", outputs[i]
 
 
 def test_skip():
@@ -222,10 +227,39 @@ def test_skip():
 #     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
 #                    max_epochs=10000, plotting=True)
 
-    for i, t in zip(inputs, targets):
-        print "input", i
-        print "target", t
-        print "output", ff.forward(i, ff.W)[-1]
+    outputs = ff.forward(inputs, ff.W)[-1]
+    for i in range(4):
+        print "-" * 20
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", outputs[i]
+
+
+def test_sparsity():
+    """Example of a network with a loss function imposing sparsity on the
+    neural activities."""
+
+    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
+                        dtype=np.float32)
+    targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
+
+    ff = FFNet([2, 8, 2], layers=[Linear(), Tanh(), Softmax()],
+               debug=True, loss_type=Sparse(CrossEntropy(), 0.1, target=-1))
+
+    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=10),
+                   max_epochs=100, plotting=True)
+
+    # using gradient descent (for comparison)
+#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1.0),
+#                    max_epochs=10000, plotting=True)
+
+    output = ff.forward(inputs, ff.W)
+    for i in range(4):
+        print "-" * 20
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", output[-1][i]
+        print "activity", np.mean(output[1][i])
 
 
 def test_profile():
@@ -294,10 +328,10 @@ def test_integrator():
 
     rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
                 layers=[Linear(), Logistic(), Logistic()],
-                loss_type="se", use_GPU=False, debug=False)
+                debug=False)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    batch_size=None, test=test, max_epochs=100, plotting=True)
+                    test=test, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
@@ -336,8 +370,8 @@ def test_continuous():
     test = (inputs, targets)
 
     rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
-                layers=[Linear(), nl, Logistic()], loss_type="se",
-                use_GPU=False, debug=False)
+                layers=[Linear(), nl, Logistic()],
+                debug=False)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     batch_size=None, test=test, max_epochs=100, plotting=True)
@@ -466,7 +500,7 @@ def test_plant():
 
     rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
-                loss_type="se", debug=False,
+                debug=False,
                 rec_layers=[False, True, True, False],
                 conns={0: [1, 2], 1: [2], 2: [3]},
                 W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
