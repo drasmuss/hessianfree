@@ -177,6 +177,8 @@ class RNNet(FFNet):
 
                 error = self.loss.d_loss([a[:, s] for a in self.activations],
                                          self.targets[:, s])
+                error = [np.zeros_like(self.activations[i][:, s]) if e is None
+                         else e for i, e in enumerate(error)]
 
                 for l in np.arange(self.n_layers - 1, -1, -1):
                     for post in self.conns[l]:
@@ -273,11 +275,11 @@ class RNNet(FFNet):
 
                 error_inc = self.loss.loss(out_inc, self.targets[:, start:n])
                 error_inc = np.sum([np.sum(e) / self.inputs.shape[0]
-                                    for e in error_inc])
+                                    for e in error_inc if e is not None])
 
                 error_dec = self.loss.loss(out_dec, self.targets[:, start:n])
                 error_dec = np.sum([np.sum(e) / self.inputs.shape[0]
-                                    for e in error_dec])
+                                    for e in error_dec if e is not None])
 
                 grad[i] += (error_inc - error_dec) / (2 * eps)
 
@@ -365,6 +367,9 @@ class RNNet(FFNet):
                 R_error = self.loss.d2_loss([a[:, s]
                                              for a in self.activations],
                                             self.targets[:, s])
+                R_error = [np.zeros_like(self.activations[i][:, s])
+                           if e is None else e for i, e in enumerate(R_error)]
+
                 for l in np.arange(self.n_layers - 1, -1, -1):
                     R_error[l] *= R_activations[l][:, s]
 
@@ -500,7 +505,8 @@ class RNNet(FFNet):
             # TODO: check loss via finite differences
 
             G += np.sum([np.einsum("abji,abj,abjk->ik", trunc_J[l], L[l], J[l])
-                         for l in range(self.n_layers)], axis=0)
+                         for l in range(self.n_layers) if L[l] is not None],
+                        axis=0)
 
         # divide by batch size
         G /= self.inputs.shape[0]

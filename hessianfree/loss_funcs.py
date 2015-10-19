@@ -6,9 +6,6 @@ import numpy as np
 class LossFunction:
     """Defines a loss function that maps nonlinearity activations to error."""
 
-    def __init__(self):
-        pass
-
     def loss(self, activities, targets):
         # note that most loss functions are only based on the output of the
         # final layer, activities[-1]. however, we pass the activities of all
@@ -32,7 +29,7 @@ def output_loss(func):
 
     @wraps(func)
     def wrapped_loss(self, activities, targets):
-        result = [np.zeros_like(a) for a in activities[:-1]]
+        result = [None for _ in activities[:-1]]
         result += [func(self, activities[-1], targets)]
 
         return result
@@ -69,54 +66,130 @@ class CrossEntropy(LossFunction):
     def d2_loss(self, output, targets):
         return np.nan_to_num(targets) / output ** 2
 
-# TODO: categorization error
 
+class SparseL1(LossFunction):
+    def __init__(self, weight, layers=None, target=0.0):
+        """Imposes L1 sparsity constraint on nonlinearity activations.
 
-class Sparse(LossFunction):
-    def __init__(self, base, weight, layers=None, target=0.0):
-        """Imposes L1 sparsity constraint on top of the base loss function.
-
-        :param base: loss function defining error in terms of target output
-        :param weight: relative weight of sparsity compared to target loss
-            (1.0 would give an equal weighting)
+        :param weight: relative weight of sparsity constraint
         :param layers: list of integers specifying which layers will have the
             sparsity constraint imposed (if None, will be applied to all
             except first/last layers)
         :param target: target activation level for nonlinearities
         """
 
-        self.base = base
         self.weight = weight
         self.layers = layers
         self.target = target
 
-    def loss(self, activities, targets):
+    def loss(self, activities, _):
         if self.layers is None:
             layers = np.arange(1, len(activities) - 1)
         else:
             layers = self.layers
 
-        loss = self.base.loss(activities, targets)
-
+        loss = [None for _ in activities]
         for l in layers:
-            loss[l] += self.weight * np.abs(activities[l] - self.target)
+            loss[l] = self.weight * np.abs(activities[l] - self.target)
 
         return loss
 
-    def d_loss(self, activities, targets):
+    def d_loss(self, activities, _):
         if self.layers is None:
             layers = np.arange(1, len(activities) - 1)
         else:
             layers = self.layers
 
-        d_loss = self.base.d_loss(activities, targets)
-
+        d_loss = [None for _ in activities]
         for l in layers:
-            d_loss[l] += self.weight * ((activities[l] > self.target) * 2 - 1)
+            d_loss[l] = self.weight * ((activities[l] > self.target) * 2 - 1)
 
         return d_loss
 
-    def d2_loss(self, activities, targets):
-        # second derivative is zero
+    def d2_loss(self, activities, _):
+        return [None for _ in activities]
 
-        return self.base.d2_loss(activities, targets)
+
+class SparseL2(LossFunction):
+    """Imposes L2 sparsity constraint on nonlinearity activations."""
+
+    # note: this is almost the same as the standard structural damping from
+    # martens. one difference is we include it in the first derivative. more
+    # significantly, this damping is applied on the output of the nonlinearity
+    # (meaning it will be influenced by d_activations), rather than applied
+    # at input side.
+    # TODO: test how well this works relative to standard structural damping
+
+    def __init__(self, weight, layers=None, target=0.0):
+        self.weight = weight
+        self.layers = layers
+        self.target = target
+
+    def loss(self, activities, _):
+        if self.layers is None:
+            layers = np.arange(1, len(activities) - 1)
+        else:
+            layers = self.layers
+
+        loss = [None for _ in activities]
+        for l in layers:
+            loss[l] = 0.5 * self.weight * (activities[l] - self.target) ** 2
+
+        return loss
+
+    def d_loss(self, activities, _):
+        if self.layers is None:
+            layers = np.arange(1, len(activities) - 1)
+        else:
+            layers = self.layers
+
+        d_loss = [None for _ in activities]
+        for l in layers:
+            d_loss[l] = self.weight * (activities[l] - self.target)
+
+        return d_loss
+
+    def d2_loss(self, activities, _):
+        if self.layers is None:
+            layers = np.arange(1, len(activities) - 1)
+        else:
+            layers = self.layers
+
+        d2_loss = [None for _ in activities]
+        for l in layers:
+            d2_loss[l] = self.weight
+
+        return d2_loss
+
+
+class LossSet(LossFunction):
+    """This combines several loss functions into one (e.g. combining
+    SquaredError and Sparse).  It doesn't need to be created directly, a list
+    of loss functions can be passed to FFNet(..., loss_type=[...]) and a
+    LossSet will be created automatically."""
+
+    def __init__(self, set):
+        self.set = set
+
+    def group_func(self, func_name, activities, targets):
+        # apply each of the loss functions
+        result = [getattr(s, func_name)(activities, targets)
+                  for s in self.set]
+
+        # sum the losses for each layer across the loss functions
+        result = [np.sum([s[i] for s in result if s[i] is not None], axis=0)
+                  for i in range(len(activities))]
+
+        # convert 0.0's (from np.sum([])) back to None
+        result = [None if isinstance(x, float) else x for x in result]
+
+        return result
+
+    def loss(self, activities, targets):
+        return self.group_func("loss", activities, targets)
+
+    def d_loss(self, activities, targets):
+        return self.group_func("d_loss", activities, targets)
+
+    def d2_loss(self, activities, targets):
+        return self.group_func("d2_loss", activities, targets)

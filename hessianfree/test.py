@@ -10,7 +10,8 @@ from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
                                         Continuous, Linear, Nonlinearity,
                                         Gaussian)
 from hessianfree.optimizers import HessianFree, SGD
-from hessianfree.loss_funcs import Sparse, SquaredError, CrossEntropy
+from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL1,
+                                    SparseL2)
 
 
 def test_xor():
@@ -243,8 +244,9 @@ def test_sparsity():
                         dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
-    ff = FFNet([2, 8, 2], layers=[Linear(), Tanh(), Softmax()],
-               debug=True, loss_type=Sparse(CrossEntropy(), 0.1, target=-1))
+    ff = FFNet([2, 8, 2], layers=[Linear(), Logistic(), Softmax()],
+               debug=True, loss_type=[CrossEntropy(),
+                                      SparseL1(0.1, target=0)])
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=10),
                    max_epochs=100, plotting=True)

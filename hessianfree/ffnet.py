@@ -29,8 +29,8 @@ class FFNet(object):
         :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
             specifying the connections between layers (default is to connect in
             series)
-        :param loss_type: loss function used to evaluate network (see
-            loss_funcs.py)
+        :param loss_type: loss function (or list of loss functions) used to
+            evaluate network (see loss_funcs.py)
         :param W_init_params: parameter dict passed to init_weights() (see
             parameter descriptions in that function)
         :param use_GPU: run certain operations on GPU to speed them up
@@ -46,7 +46,7 @@ class FFNet(object):
         self.dtype = np.float64 if debug else np.float32
 
         self.epoch = None
-        # note: this isn't used internally, it is just there so that an
+        # note: this isn't used internally, it is just here so that an
         # external process with a handle to this object can tell what epoch
         # it is on
 
@@ -136,7 +136,7 @@ class FFNet(object):
                     max_epochs=1000, batch_size=None, test=None,
                     target_err=1e-6, plotting=False, test_err=None,
                     file_output=None):
-        """Apply Hessian-free algorithm with a sequence of minibatches.
+        """Apply the given optimizer with a sequence of minibatches.
 
         :param inputs: input vectors (or a callable plant that will generate
             the input vectors dynamically)
@@ -348,7 +348,8 @@ class FFNet(object):
         error = self.loss.loss(activations, targets)
 
         # take mean across batches and sum over layers
-        error = np.sum([np.sum(e) / inputs.shape[0] for e in error])
+        error = np.sum([np.sum(e) / inputs.shape[0] for e in error
+                        if e is not None])
 
         return error
 
@@ -385,6 +386,9 @@ class FFNet(object):
 
         # compute output error for each layer
         error = self.loss.d_loss(self.activations, self.targets)
+
+        error = [np.zeros_like(self.activations[i]) if e is None else e
+                 for i, e in enumerate(error)]
 
         deltas = [None for _ in range(self.n_layers)]
 
@@ -456,6 +460,9 @@ class FFNet(object):
         # multiply by second derivative of loss function
         R_error = self.loss.d2_loss(self.activations, self.targets)
 
+        R_error = [np.zeros_like(self.activations[i]) if e is None else e
+                   for i, e in enumerate(R_error)]
+
         for i in range(self.n_layers - 1, -1, -1):
             # TODO: multiply all layers by R_activation?
             R_error[i] *= R_activations[i]
@@ -513,7 +520,7 @@ class FFNet(object):
         # TODO: check loss via finite differences
 
         G = np.sum([np.einsum("aji,aj,ajk->ik", J[l], L[l], J[l])
-                    for l in range(self.n_layers)], axis=0)
+                    for l in range(self.n_layers) if L[l] is not None], axis=0)
 
         # divide by batch size
         G /= self.inputs.shape[0]
@@ -628,22 +635,33 @@ class FFNet(object):
                                                  self.shape[conn[1]]))
 
     def init_loss(self, loss_type):
-        if not isinstance(loss_type, loss_funcs.LossFunction):
-            raise TypeError("loss_type must be an instance of LossFunction")
+        if isinstance(loss_type, (list, tuple)):
+            tmp = loss_type
+        else:
+            tmp = [loss_type]
 
-        self.loss = loss_type
+        for t in tmp:
+            if not isinstance(t, loss_funcs.LossFunction):
+                raise TypeError("loss_type (%s) must be an instance of "
+                                "LossFunction" % t)
 
-        # sanity checks
-        if (isinstance(self.loss, loss_funcs.CrossEntropy) and
-            np.any(self.layers[-1].activation(np.linspace(-80, 80,
-                                                          100)[None, :])
-                   <= 0)):
-            # this won't catch everything, but hopefully a useful warning
-            raise ValueError("Must use positive activation function"
-                             " with cross-entropy error")
-        if (isinstance(self.loss, loss_funcs.CrossEntropy) and
-                not isinstance(self.layers[-1], nonlinearities.Softmax)):
-            print "Softmax should probably be used with cross-entropy error"
+            # sanity checks
+            if (isinstance(t, loss_funcs.CrossEntropy) and
+                np.any(self.layers[-1].activation(np.linspace(-80, 80,
+                                                              100)[None, :])
+                       <= 0)):
+                # this won't catch everything, but hopefully a useful warning
+                raise ValueError("Must use positive activation function "
+                                 "with cross-entropy error")
+            if (isinstance(t, loss_funcs.CrossEntropy) and
+                    not isinstance(self.layers[-1], nonlinearities.Softmax)):
+                print ("Softmax should probably be used with cross-entropy "
+                       "error")
+
+        if isinstance(loss_type, (list, tuple)):
+            self.loss = loss_funcs.LossSet(loss_type)
+        else:
+            self.loss = loss_type
 
     def init_GPU(self):
         try:
