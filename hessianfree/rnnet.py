@@ -274,12 +274,10 @@ class RNNet(FFNet):
                                        init_state=init_s)
 
                 error_inc = self.loss.loss(out_inc, self.targets[:, start:n])
-                error_inc = np.sum([np.sum(e) / self.inputs.shape[0]
-                                    for e in error_inc if e is not None])
+                error_inc = self.loss.batch_mean(error_inc)
 
                 error_dec = self.loss.loss(out_dec, self.targets[:, start:n])
-                error_dec = np.sum([np.sum(e) / self.inputs.shape[0]
-                                    for e in error_dec if e is not None])
+                error_dec = self.loss.batch_mean(error_dec)
 
                 grad[i] += (error_inc - error_dec) / (2 * eps)
 

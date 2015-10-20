@@ -204,8 +204,8 @@ class FFNet(object):
             if test_err is None:
                 err = self.error(self.W, test_in, test_t)
             else:
-                output = self.forward(test_in, self.W)[-1]
-                err = test_err(output, test_t)
+                output = self.forward(test_in, self.W)
+                err = test_err.batch_mean(test_err.loss(output, test_t))
             test_errs += [err]
 
             if i % print_period == 0:
@@ -348,8 +348,7 @@ class FFNet(object):
         error = self.loss.loss(activations, targets)
 
         # take mean across batches and sum over layers
-        error = np.sum([np.sum(e) / inputs.shape[0] for e in error
-                        if e is not None])
+        error = self.loss.batch_mean(error)
 
         return error
 

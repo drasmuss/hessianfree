@@ -22,6 +22,13 @@ class LossFunction:
         """Second derivative of loss function (with respect to activities)."""
         raise NotImplementedError()
 
+    def batch_mean(self, losses):
+        """Utility function to compute a single loss value (taking the mean
+        across batches and summing the loss in each layer)."""
+
+        return np.sum([np.sum(l, dtype=np.float32) / l.shape[0] for l in losses
+                       if l is not None])
+
 
 def output_loss(func):
     """Convenience wrapper that takes a loss defined for the output layer
@@ -67,6 +74,15 @@ class CrossEntropy(LossFunction):
         return np.nan_to_num(targets) / output ** 2
 
 
+class ClassificationError(LossFunction):
+    @output_loss
+    def loss(self, output, targets):
+        return np.argmax(output, axis=-1) == np.argmax(targets, axis=-1)
+
+    # note: not defining d_loss or d2_loss; classification error should only
+    # be used for validation, which doesn't require either
+
+
 class SparseL1(LossFunction):
     def __init__(self, weight, layers=None, target=0.0):
         """Imposes L1 sparsity constraint on nonlinearity activations.
@@ -79,29 +95,19 @@ class SparseL1(LossFunction):
         """
 
         self.weight = weight
-        self.layers = layers
+        self.layers = np.index_exp[1:-1] if layers is None else layers
         self.target = target
 
     def loss(self, activities, _):
-        if self.layers is None:
-            layers = np.arange(1, len(activities) - 1)
-        else:
-            layers = self.layers
-
         loss = [None for _ in activities]
-        for l in layers:
+        for l in np.arange(len(activities))[self.layers]:
             loss[l] = self.weight * np.abs(activities[l] - self.target)
 
         return loss
 
     def d_loss(self, activities, _):
-        if self.layers is None:
-            layers = np.arange(1, len(activities) - 1)
-        else:
-            layers = self.layers
-
         d_loss = [None for _ in activities]
-        for l in layers:
+        for l in np.arange(len(activities))[self.layers]:
             d_loss[l] = self.weight * ((activities[l] > self.target) * 2 - 1)
 
         return d_loss
@@ -122,41 +128,26 @@ class SparseL2(LossFunction):
 
     def __init__(self, weight, layers=None, target=0.0):
         self.weight = weight
-        self.layers = layers
+        self.layers = np.index_exp[1:-1] if layers is None else layers
         self.target = target
 
     def loss(self, activities, _):
-        if self.layers is None:
-            layers = np.arange(1, len(activities) - 1)
-        else:
-            layers = self.layers
-
         loss = [None for _ in activities]
-        for l in layers:
+        for l in np.arange(len(activities))[self.layers]:
             loss[l] = 0.5 * self.weight * (activities[l] - self.target) ** 2
 
         return loss
 
     def d_loss(self, activities, _):
-        if self.layers is None:
-            layers = np.arange(1, len(activities) - 1)
-        else:
-            layers = self.layers
-
         d_loss = [None for _ in activities]
-        for l in layers:
+        for l in np.arange(len(activities))[self.layers]:
             d_loss[l] = self.weight * (activities[l] - self.target)
 
         return d_loss
 
     def d2_loss(self, activities, _):
-        if self.layers is None:
-            layers = np.arange(1, len(activities) - 1)
-        else:
-            layers = self.layers
-
         d2_loss = [None for _ in activities]
-        for l in layers:
+        for l in np.arange(len(activities))[self.layers]:
             d2_loss[l] = self.weight
 
         return d2_loss
