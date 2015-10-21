@@ -136,6 +136,8 @@ class HessianFree(Optimizer):
             self.plots["learning rate"] += [l_rate]
             self.plots["damping"] += [self.damping]
             self.plots["CG iterations"] += [deltas[-1][0]]
+            self.plots["backtracked steps"] += [deltas[-1][0] -
+                                                deltas[j + 1][0]]
 
         return l_rate * delta
 

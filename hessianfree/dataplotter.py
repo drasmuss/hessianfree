@@ -1,6 +1,7 @@
 """Run this script to display the data output during a run."""
 
 import pickle
+import threading
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -29,6 +30,12 @@ def run(filename):
 
         plt.draw()
         plt.pause(10)
+
+
+def run_thread(filename):
+    p = threading.Thread(target=run, args=(filename,))
+    p.daemon = True
+    p.start()
 
 if __name__ == "__main__":
     run("HF_plots.pkl")
