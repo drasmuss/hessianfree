@@ -7,9 +7,6 @@ class Optimizer(object):
     # note: optimizers don't actually need to inherit from this class, this
     # just demonstrates the minimum structure that is expected
     def __init__(self):
-        """Initialize the optimizer with whatever parameters are appropriate.
-        """
-
         # the network will be set automatically when the optimizer is added to
         # a network
         self.net = None
@@ -95,11 +92,11 @@ class HessianFree(Optimizer):
 
         # update damping parameter (compare improvement predicted by
         # quadratic model to the actual improvement in the error)
-        denom = (0.5 * np.dot(delta,
-                              self.net.calc_G(delta, damping=self.damping)) +
-                 np.dot(grad, delta))
+        quad = (0.5 * np.dot(self.net.calc_G(delta, damping=self.damping),
+                            delta) +
+                np.dot(grad, delta))
 
-        improvement_ratio = (new_err - err) / denom if denom != 0 else 1
+        improvement_ratio = ((new_err - err) / quad) if quad != 0 else 1
         if improvement_ratio < 0.25:
             self.damping *= 1.5
         elif improvement_ratio > 0.75:
@@ -150,9 +147,10 @@ class HessianFree(Optimizer):
         deltas = []
         vals = np.zeros(iters, dtype=self.net.dtype)
 
-        base_grad = -grad
+        base_grad = -grad  # note negative
         delta = init_delta
-        residual = base_grad - self.net.calc_G(init_delta, damping=self.damping)
+        residual = base_grad
+        residual -= self.net.calc_G(init_delta, damping=self.damping)
         res_norm = np.dot(residual, residual)
         direction = residual.copy()
 
@@ -192,9 +190,7 @@ class HessianFree(Optimizer):
 
             if new_res_norm < 1e-20:
                 # early termination (mainly to prevent numerical errors);
-                # if this ever triggers, it's probably because the minimum
-                # gap in the normal termination condition (below) is too low.
-                # this only occurs on really simple problems
+                # the main termination condition is below.
                 break
 
             # update direction
@@ -204,6 +200,7 @@ class HessianFree(Optimizer):
 
             res_norm = new_res_norm
 
+            # store deltas for backtracking
             if i == store_iter:
                 deltas += [(i, np.copy(delta))]
                 store_iter = int(store_iter * store_mult)

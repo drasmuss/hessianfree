@@ -130,7 +130,12 @@ class FFNet(object):
         if use_GPU:
             self.init_GPU()
         else:
-            self.outer_sum = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
+            def outer_sum(a, b, out=None):
+                if out is not None:
+                    out = np.reshape(out, (a.shape[1], b.shape[1]))
+
+                return np.ravel(np.einsum("ij,ik", a, b, out=out))
+            self.outer_sum = outer_sum
 
     def run_batches(self, inputs, targets, optimizer,
                     max_epochs=1000, batch_size=None, test=None,
@@ -197,7 +202,6 @@ class FFNet(object):
             self.d_activations = None
             self.GPU_activations = None
 
-            # TODO: maybe don't compute test error every iteration?
             # compute test error
             if test is None:
                 test_in, test_t = self.inputs, self.targets
@@ -304,7 +308,8 @@ class FFNet(object):
                                   dtype=self.dtype)
                 for pre in self.back_conns[i]:
                     W, b = self.get_weights(params, (pre, i))
-                    inputs += np.dot(activations[pre], W) + b
+                    inputs += np.dot(activations[pre], W)
+                    inputs += b
                     # note: we're applying a bias on each connection (rather
                     # than one for each neuron). just because it's easier than
                     # tracking how many connections there are for each layer.
@@ -352,7 +357,7 @@ class FFNet(object):
 
         return error
 
-    def J_dot(self, J, vec, transpose=False):
+    def J_dot(self, J, vec, transpose=False, out=None):
         """Compute the product of a Jacobian and some vector."""
 
         # In many cases the Jacobian is a diagonal matrix, so it is more
@@ -362,11 +367,16 @@ class FFNet(object):
         if J.ndim == 2:
             # note: the first dimension is the batch, so ndim==2 means
             # this is a diagonal representation
-            return J * vec
+
+            if out is None:
+                return J * vec
+            else:
+                out[...] = J * vec
+                return out
         else:
             if transpose:
                 J = np.transpose(J, (0, 2, 1))
-            return np.einsum("ijk,ik->ij", J, vec)
+            return np.einsum("ijk,ik->ij", J, vec, out=out)
 
     def calc_grad(self):
         """Compute parameter gradient."""
@@ -389,22 +399,23 @@ class FFNet(object):
         error = [np.zeros_like(self.activations[i]) if e is None else e
                  for i, e in enumerate(error)]
 
-        deltas = [None for _ in range(self.n_layers)]
+        deltas = [np.zeros_like(a) for a in self.activations]
 
         # backwards pass
         for i in range(self.n_layers - 1, -1, -1):
             for post in self.conns[i]:
-                c_error = np.dot(deltas[post],
-                                 self.get_weights(self.W, (i, post))[0].T)
-                error[i] += c_error
+                error[i] += np.dot(deltas[post],
+                                   self.get_weights(self.W, (i, post))[0].T)
 
                 offset, W_end, b_end = self.offsets[(i, post)]
-                grad[offset:W_end] = self.outer_sum(
+
+                self.outer_sum(
                     self.activations[i] if self.GPU_activations is None
-                    else [i], deltas[post])
+                    else [i], deltas[post], out=grad[offset:W_end])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
-            deltas[i] = self.J_dot(self.d_activations[i], error[i])
+            self.J_dot(self.d_activations[i], error[i],
+                       out=deltas[i])
 
         grad /= self.inputs.shape[0]
 
@@ -440,43 +451,48 @@ class FFNet(object):
 
         Gv = np.zeros(self.W.size, dtype=self.dtype)
 
+        # allocate temporary space for intermediate values, to save on
+        # memory allocations
+        tmp_space = [np.zeros(a.shape, self.dtype) for a in self.activations]
+
         # R forward pass
-        R_activations = [None for _ in range(self.n_layers)]
-        R_activations[0] = np.zeros_like(self.activations[0])
+        R_activations = [np.zeros_like(a) for a in self.activations]
         for i in range(1, self.n_layers):
             R_input = np.zeros_like(self.activations[i])
             for pre in self.back_conns[i]:
                 vw, vb = self.get_weights(v, (pre, i))
                 Ww, _ = self.get_weights(self.W, (pre, i))
-                R_input += np.dot(self.activations[pre], vw) + vb
-                R_input += np.dot(R_activations[pre], Ww)
+                R_input += np.dot(self.activations[pre], vw, out=tmp_space[i])
+                R_input += vb
+                R_input += np.dot(R_activations[pre], Ww, out=tmp_space[i])
 
-            R_activations[i] = self.J_dot(self.d_activations[i], R_input)
+            self.J_dot(self.d_activations[i], R_input,
+                       out=R_activations[i])
 
         # backward pass
-        R_deltas = [None for _ in range(self.n_layers)]
+        R_deltas = [np.zeros_like(a) for a in self.activations]
 
-        # multiply by second derivative of loss function
         R_error = self.loss.d2_loss(self.activations, self.targets)
 
-        R_error = [np.zeros_like(self.activations[i]) if e is None else e
-                   for i, e in enumerate(R_error)]
-
         for i in range(self.n_layers - 1, -1, -1):
-            # TODO: multiply all layers by R_activation?
-            R_error[i] *= R_activations[i]
+            if R_error[i] is not None:
+                R_error[i] *= R_activations[i]
+            else:
+                R_error[i] = np.zeros_like(self.activations[i])
 
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.W, (i, post))
-                R_error[i] += np.dot(R_deltas[post], W.T)
+
+                R_error[i] += np.dot(R_deltas[post], W.T, out=tmp_space[i])
 
                 offset, W_end, b_end = self.offsets[(i, post)]
-                Gv[offset:W_end] = self.outer_sum(
+                self.outer_sum(
                     self.activations[i] if self.GPU_activations is None
-                    else [i], R_deltas[post])
+                    else [i], R_deltas[post], out=Gv[offset:W_end])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
 
-            R_deltas[i] = self.J_dot(self.d_activations[i], R_error[i])
+            self.J_dot(self.d_activations[i], R_error[i],
+                       out=R_deltas[i])
 
         Gv /= len(self.inputs)
 
@@ -603,6 +619,7 @@ class FFNet(object):
                     for pre in self.conns
                     for post in self.conns[pre]]
         self.offsets = {}
+        self.weights = {}
         offset = 0
         for pre in self.conns:
             for post in self.conns[pre]:
@@ -615,23 +632,27 @@ class FFNet(object):
 
         return offset
 
-    def get_weights(self, params, conn, separate=True):
+    def get_weights(self, params, conn):
         """Get weight matrix for a connection from overall parameter vector."""
 
         if conn not in self.offsets:
             return None
 
-        offset, W_end, b_end = self.offsets[conn]
-        if separate:
-            W = params[offset:W_end]
-            b = params[W_end:b_end]
+        if params is self.W and conn in self.weights:
+            return self.weights[conn]
 
-            return (W.reshape((self.shape[conn[0]],
-                               self.shape[conn[1]])),
-                    b)
-        else:
-            return params[offset:b_end].reshape((self.shape[conn[0]] + 1,
-                                                 self.shape[conn[1]]))
+        offset, W_end, b_end = self.offsets[conn]
+        W = params[offset:W_end]
+        b = params[W_end:b_end]
+
+        result = (W.reshape((self.shape[conn[0]], self.shape[conn[1]])),
+                  b)
+
+        # cache references to the reshaped weights
+        if params is self.W:
+            self.weights[conn] = result
+
+        return result
 
     def init_loss(self, loss_type):
         if isinstance(loss_type, (list, tuple)):
@@ -721,7 +742,7 @@ class FFNet(object):
 
             return 1
 
-        def outer_sum(in_a, in_b):
+        def outer_sum(in_a, in_b, out=None):
             if isinstance(in_a, (list, tuple)):
                 # load pre-cached GPU activations
                 a = self.GPU_activations
@@ -735,15 +756,17 @@ class FFNet(object):
             b_len = np.int32(b.shape[1])
             batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
 
+            if out is None:
+                out = np.zeros(a_len * b_len, dtype=np.float32)
+
             if a_len * b_len < self.GPU_threshold:
                 # just do it on the CPU
                 if isinstance(in_a, (list, tuple)):
                     a = self.activations
                     for idx in in_a:
                         a = a[idx]
-                return np.ravel(np.einsum("ij,ik", a, b))
-
-            out = np.zeros(a_len * b_len, dtype=np.float32)
+                return np.ravel(np.einsum("ij,ik", a, b,
+                                          out=out.reshape((a_len, b_len))))
 
             if self.debug:
                 # convert the 64 bit values to 32 bit

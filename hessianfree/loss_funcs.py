@@ -12,6 +12,8 @@ class LossFunction:
         # layers here so that loss functions can include things like
         # sparsity constraints. targets, however, are only defined for the
         # output layer.
+        # note2: targets can be defined as np.nan, which should be translated
+        # into zero error
         raise NotImplementedError()
 
     def d_loss(self, activities, targets):
@@ -78,7 +80,8 @@ class CrossEntropy(LossFunction):
 class ClassificationError(LossFunction):
     @output_loss
     def loss(self, output, targets):
-        return np.argmax(output, axis=-1) == np.argmax(targets, axis=-1)
+        return (np.argmax(output, axis=-1) ==
+                np.argmax(np.nan_to_num(targets), axis=-1))
 
     # note: not defining d_loss or d2_loss; classification error should only
     # be used for validation, which doesn't require either
@@ -156,8 +159,8 @@ class SparseL2(LossFunction):
 
 class LossSet(LossFunction):
     """This combines several loss functions into one (e.g. combining
-    SquaredError and Sparse).  It doesn't need to be created directly, a list
-    of loss functions can be passed to FFNet(..., loss_type=[...]) and a
+    SquaredError and SparseL1).  It doesn't need to be created directly, a list
+    of loss functions can be passed to FF/RNNet(..., loss_type=[...]) and a
     LossSet will be created automatically."""
 
     def __init__(self, set):
@@ -173,7 +176,8 @@ class LossSet(LossFunction):
                   for i in range(len(activities))]
 
         # convert 0.0's (from np.sum([])) back to None
-        result = [None if isinstance(x, float) else x for x in result]
+        result = [None if (isinstance(x, float) and x == 0.0) else x
+                  for x in result]
 
         return result
 

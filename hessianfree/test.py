@@ -76,7 +76,7 @@ def test_mnist(model_args=None, run_args=None):
 
     output = ff.forward(test[0], ff.W)
     print "classification error", ClassificationError().batch_loss(output,
-                                                                   targets)
+                                                                   test[1])
 
 
 def test_softlif():
@@ -190,9 +190,16 @@ def test_profile():
     import cProfile
     import pstats
 
-    cProfile.run("test_mnist(None, {'max_epochs':5, 'plotting':False, "
-                 "'batch_size':7500})",
+#     cProfile.run("test_mnist(None, {'max_epochs':15, 'plotting':False, "
+#                  "'batch_size':7500, 'CG_iter':10})",
+#                  "profilestats")
+
+    cProfile.run("test_integrator({'shape':[1,100,1], 'layers':[Linear(), "
+                 "Logistic(), Logistic()], 'debug':False}, {'max_epochs':30, "
+                 "'plotting':False, 'CG_iter':10}, n_inputs=500, "
+                 "sig_len=200, plots=False)",
                  "profilestats")
+
     p = pstats.Stats("profilestats")
     p.strip_dirs().sort_stats('time').print_stats(20)
 
@@ -238,11 +245,10 @@ def test_GPU():
     print times[..., 1] < times[..., 0]
 
 
-def test_integrator():
+def test_integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
+                    plots=True):
     """Test for a recurrent network, implementing an integrator."""
 
-    n_inputs = 15
-    sig_len = 10
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -252,32 +258,43 @@ def test_integrator():
 
     test = (inputs, targets)
 
-    rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
-                layers=[Linear(), Logistic(), Logistic()],
-                debug=True)
+    if model_args is None:
+        rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
+                    layers=[Linear(), Logistic(), Logistic()],
+                    debug=True)
+    else:
+        rnn = RNNet(**model_args)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    test=test, max_epochs=30, plotting=True)
+    if run_args is None:
+        rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                        test=test, max_epochs=30, plotting=True)
+    else:
+        CG_iter = run_args.pop("CG_iter", 100)
+        init_damping = run_args.pop("init_damping", 1)
+        rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter,
+                                                               init_damping),
+                        test=test, **run_args)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
 #                     batch_size=None, test=test, max_epochs=10000,
 #                     plotting=True)
 
-    plt.figure()
-    plt.plot(inputs.squeeze().T)
-    plt.title("inputs")
+    if plots:
+        plt.figure()
+        plt.plot(inputs.squeeze().T)
+        plt.title("inputs")
 
-    plt.figure()
-    plt.plot(targets.squeeze().T)
-    plt.title("targets")
+        plt.figure()
+        plt.plot(targets.squeeze().T)
+        plt.title("targets")
 
-    outputs = rnn.forward(inputs, rnn.W)[-1]
-    plt.figure()
-    plt.plot(outputs.squeeze().T)
-    plt.title("outputs")
+        outputs = rnn.forward(inputs, rnn.W)[-1]
+        plt.figure()
+        plt.plot(outputs.squeeze().T)
+        plt.title("outputs")
 
-    plt.show()
+        plt.show()
 
 
 def test_continuous():

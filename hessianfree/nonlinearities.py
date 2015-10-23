@@ -79,7 +79,8 @@ class Softmax(Nonlinearity):
         return e
 
     def d_activation(self, x, a):
-        return a[..., None, :] * (np.eye(a.shape[-1]) - a[..., None])
+        return a[..., None, :] * (np.eye(a.shape[-1], dtype=np.float32) -
+                                  a[..., None])
 
 
 class SoftLIF(Nonlinearity):
@@ -141,17 +142,21 @@ class Continuous(Nonlinearity):
         # based on x (via self.activation()). hence the sanity check.
         assert self.act_count == self.d_act_count
 
+        # note: need to create a new array each time (since other things
+        # might be holding a reference to d_act)
+        d_act = np.zeros((x.shape[0], x.shape[1], 3), dtype=np.float32)
+
         # derivative of state with respect to input
-        d_input = np.resize(self.coeff, (x.shape[0], x.shape[1], 1))
+        d_act[:, :, 0] = self.coeff
 
         # derivative of state with respect to previous state
-        d_state = np.resize(1 - self.coeff, (x.shape[0], x.shape[1], 1))
+        d_act[:, :, 1] = 1 - self.coeff
 
         # derivative of output with respect to state
         # TODO: fix this so it works if base returns matrices
-        d_output = self.base.d_activation(self.state, a)[..., None]
+        d_act[:, :, 2] = self.base.d_activation(self.state, a)
 
-        return np.concatenate((d_input, d_state, d_output), axis=-1)
+        return d_act
 
     def reset(self, init=None):
         self.state = 0.0 if init is None else init.copy()
