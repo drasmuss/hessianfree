@@ -186,6 +186,9 @@ class FFNet(object):
 
             # compute update
             update = optimizer.compute_update(i % print_period == 0)
+
+            assert update.dtype == self.dtype
+
             self.W += update
 
             # invalidate cached activations (shouldn't be necessary,
@@ -205,7 +208,7 @@ class FFNet(object):
                 err = self.error(self.W, test_in, test_t)
             else:
                 output = self.forward(test_in, self.W)
-                err = test_err.batch_mean(test_err.loss(output, test_t))
+                err = test_err.batch_loss(output, test_t)
             test_errs += [err]
 
             if i % print_period == 0:
@@ -345,10 +348,7 @@ class FFNet(object):
         # we don't want to confuse nan outputs with nan targets
         assert np.all(np.isfinite(activations[-1]))
 
-        error = self.loss.loss(activations, targets)
-
-        # take mean across batches and sum over layers
-        error = self.loss.batch_mean(error)
+        error = self.loss.batch_loss(activations, targets)
 
         return error
 
@@ -676,6 +676,10 @@ class FFNet(object):
         print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
         self.num_threads = dev.MAX_THREADS_PER_BLOCK
 
+        # if the outer product has fewer than this many entries (per batch),
+        # then we'll just compute outer_sum on the CPU
+        self.GPU_threshold = 2 ** 16
+
         # this one operation in the gradient/Gv calculations is where
         # most of the computational work can be this algorithm, so
         # parallelizing it on the GPU can be pretty helpful.
@@ -731,7 +735,7 @@ class FFNet(object):
             b_len = np.int32(b.shape[1])
             batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
 
-            if a_len * b_len < 2 ** 14:
+            if a_len * b_len < self.GPU_threshold:
                 # just do it on the CPU
                 if isinstance(in_a, (list, tuple)):
                     a = self.activations

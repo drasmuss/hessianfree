@@ -273,11 +273,11 @@ class RNNet(FFNet):
                                        init_activations=init_a,
                                        init_state=init_s)
 
-                error_inc = self.loss.loss(out_inc, self.targets[:, start:n])
-                error_inc = self.loss.batch_mean(error_inc)
+                error_inc = self.loss.batch_loss(out_inc,
+                                                 self.targets[:, start:n])
 
-                error_dec = self.loss.loss(out_dec, self.targets[:, start:n])
-                error_dec = self.loss.batch_mean(error_dec)
+                error_dec = self.loss.batch_loss(out_dec,
+                                                 self.targets[:, start:n])
 
                 grad[i] += (error_inc - error_dec) / (2 * eps)
 

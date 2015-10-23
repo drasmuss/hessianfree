@@ -11,7 +11,7 @@ from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
                                         Gaussian)
 from hessianfree.optimizers import HessianFree, SGD
 from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL1,
-                                    SparseL2)
+                                    SparseL2, ClassificationError)
 
 
 def test_xor():
@@ -61,103 +61,22 @@ def test_mnist(model_args=None, run_args=None):
     tmp += 0.01
     test = (test[0], tmp)
 
-    def test_err(outputs, targets):
-        return np.mean(np.argmax(outputs, axis=-1) !=
-                       np.argmax(targets, axis=-1))
-
     if run_args is None:
         ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=250,
                                                               init_damping=45),
                        batch_size=7500, test=test, max_epochs=1000,
-                       plotting=True, test_err=test_err)
+                       plotting=True, test_err=ClassificationError())
     else:
         CG_iter = run_args.pop("CG_iter", 250)
-        init_damping = run_args.pop("init_damping", 1)
+        init_damping = run_args.pop("init_damping", 45)
         ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter,
                                                               init_damping),
-                       test=test, test_err=test_err,
+                       test=test, test_err=ClassificationError(),
                        **run_args)
 
-    output = ff.forward(test[0], ff.W)[-1]
-    class_err = np.mean(np.argmax(output, axis=1) !=
-                        np.argmax(test[1], axis=1))
-    print "classification error", class_err
-
-
-def test_cifar():
-    """Test on the CIFAR (image classification) data set.
-
-    Note: this is a WIP."""
-
-    # download dataset at http://www.cs.toronto.edu/~kriz/cifar.html
-    train = [None, None]
-    for i in range(1, 6):
-        with open("cifar/data_batch_%s" % i, "rb") as f:
-            batch = pickle.load(f)
-        if i == 1:
-            train[0] = batch["data"]
-            train[1] = batch["labels"]
-        else:
-            train[0] = np.concatenate((train[0], batch["data"]), axis=0)
-            train[1] = np.concatenate((train[1], batch["labels"]), axis=0)
-    with open("cifar/test_batch", "rb") as f:
-        batch = pickle.load(f)
-    test = [None, None]
-    test[0] = batch["data"]
-    test[1] = batch["labels"]
-
-    # take random patches from training set
-    dim = 24
-    tmp = np.zeros((train[0].shape[0], dim * dim * 3))
-    for i, t in enumerate(train[0]):
-        img = t.reshape(3, 32, 32)
-
-#         plt.figure()
-#         plt.imshow(img.swapaxes(0, 2), interpolation="none")
-#         plt.show()
-
-        x_offset = np.random.randint(32 - dim)
-        y_offset = np.random.randint(32 - dim)
-        img = img[:, x_offset:x_offset + dim, y_offset:y_offset + dim]
-
-#         plt.figure()
-#         plt.imshow(img.swapaxes(0, 2), interpolation="none")
-#         plt.show()
-
-        tmp[i] = np.ravel(img)
-    train[0] = tmp
-
-    # take centre patches from test set
-    tmp = np.zeros((test[0].shape[0], dim * dim * 3))
-    for i, t in enumerate(test[0]):
-        img = t.reshape(3, 32, 32)
-        offset = (32 - dim) / 2
-        img = img[:, offset:offset + dim, offset:offset + dim]
-        tmp[i] = np.ravel(img)
-    test[0] = tmp
-
-    train[0] = train[0].astype(np.float32)
-    tmp = np.zeros((len(train[0]), 10), dtype=np.float32)
-    tmp[np.arange(len(train[0])), train[1]] = 1.0
-    train[1] = tmp
-
-    test[0] = test[0].astype(np.float32)
-    tmp = np.zeros((len(test[0]), 10), dtype=np.float32)
-    tmp[np.arange(len(test[0])), test[1]] = 1.0
-    test[1] = tmp
-
-    ff = FFNet([dim * dim * 3, 1024, 512, 256, 32, 10],
-               layers=[Linear()] + [Tanh()] * 4 + [Softmax()],
-               loss_type=CrossEntropy(), use_GPU=True, debug=False,
-               load_weights=None)
-
-    ff.run_batches(train[0], train[1], optimizer=HessianFree(CG_iter=300),
-                   batch_size=5000, test=test, max_epochs=1000, plotting=True)
-
-    output = ff.forward(test[0], ff.W)[-1]
-    class_err = np.mean(np.argmax(output, axis=1) !=
-                        np.argmax(test[1], axis=1))
-    print "classification error", class_err
+    output = ff.forward(test[0], ff.W)
+    print "classification error", ClassificationError().batch_loss(output,
+                                                                   targets)
 
 
 def test_softlif():
@@ -211,7 +130,7 @@ def test_crossentropy():
         print "output", outputs[i]
 
 
-def test_skip():
+def test_connections():
     """Example of a network with non-standard connectivity between layers."""
 
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
@@ -283,9 +202,13 @@ def test_GPU():
     threshold in FFNet.init_GPU)."""
 
     import time
+    from pycuda import gpuarray
 
     ff = FFNet([1, 1], use_GPU=True, debug=False)
-    ff.GPU_activations = None
+
+    # we always want to run on GPU
+    ff.GPU_threshold = 0
+
     gpu = ff.outer_sum
     cpu = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
 
@@ -304,21 +227,22 @@ def test_GPU():
             times[n, b, 0] = time.time() - start
 
             start = time.time()
+            ff.GPU_activations = [gpuarray.to_gpu(x)]
             for _ in range(reps):
-                _ = gpu(x, y)
+                _ = gpu([0], y)
             times[n, b, 1] = time.time() - start
 
             print "n", n, "b", b, "times", times[n, b]
 
     print times
-    print times[..., 1] > times[..., 0]
+    print times[..., 1] < times[..., 0]
 
 
 def test_integrator():
     """Test for a recurrent network, implementing an integrator."""
 
     n_inputs = 15
-    sig_len = 50
+    sig_len = 10
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -330,10 +254,10 @@ def test_integrator():
 
     rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
                 layers=[Linear(), Logistic(), Logistic()],
-                debug=False)
+                debug=True)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    test=test, max_epochs=100, plotting=True)
+                    test=test, max_epochs=30, plotting=True)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),

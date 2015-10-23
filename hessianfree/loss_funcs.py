@@ -22,11 +22,12 @@ class LossFunction:
         """Second derivative of loss function (with respect to activities)."""
         raise NotImplementedError()
 
-    def batch_mean(self, losses):
+    def batch_loss(self, activities, targets):
         """Utility function to compute a single loss value (taking the mean
         across batches and summing the loss in each layer)."""
 
-        return np.sum([np.sum(l, dtype=np.float32) / l.shape[0] for l in losses
+        losses = self.loss(activities, targets)
+        return np.sum([np.true_divide(np.sum(l), l.shape[0]) for l in losses
                        if l is not None])
 
 
