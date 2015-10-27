@@ -48,7 +48,7 @@ Requirements
 * numpy 1.9
 * scipy 0.15 
 * matplotlib 1.4
-* optional: pycuda 2014
+* optional: pycuda 2014, pytest 2.5.2
 
 (older versions may work, but are untested)
 

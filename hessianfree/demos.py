@@ -49,7 +49,9 @@ def mnist(model_args=None, run_args=None):
                    layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
                    use_GPU=True, debug=False)
     else:
-        ff = FFNet(**model_args)
+        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10],
+                   layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
+                   **model_args)
 
     inputs = train[0]
     targets = np.zeros((inputs.shape[0], 10), dtype=np.float32)
@@ -82,8 +84,7 @@ def mnist(model_args=None, run_args=None):
 def crossentropy():
     """Example of a network using cross-entropy error."""
 
-    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
-                        dtype=np.float32)
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
@@ -107,8 +108,7 @@ def crossentropy():
 def connections():
     """Example of a network with non-standard connectivity between layers."""
 
-    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
-                        dtype=np.float32)
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 5, 1], layers=Tanh(),
@@ -133,8 +133,7 @@ def sparsity():
     """Example of a network with a loss function imposing sparsity on the
     neural activities."""
 
-    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
-                        dtype=np.float32)
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
     ff = FFNet([2, 8, 2], layers=[Linear(), Logistic(), Softmax()],
@@ -156,22 +155,25 @@ def sparsity():
         print "activity", np.mean(output[1][i])
 
 
-def profile():
+def profile(func):
     """Run a profiler on the code."""
 
     np.random.seed(0)
     import cProfile
     import pstats
 
-#     cProfile.run("mnist(None, {'max_epochs':15, 'plotting':False, "
-#                  "'batch_size':7500, 'CG_iter':10})",
-#                  "profilestats")
-
-    cProfile.run("integrator({'shape':[1,100,1], 'layers':[Linear(), "
-                 "Logistic(), Logistic()], 'debug':False}, {'max_epochs':30, "
-                 "'plotting':False, 'CG_iter':10}, n_inputs=500, "
-                 "sig_len=200, plots=False)",
-                 "profilestats")
+    if func == "mnist":
+        cProfile.run("mnist(None, {'max_epochs':15, 'plotting':False, "
+                     "'batch_size':7500, 'CG_iter':10})",
+                     "profilestats")
+    elif func == "integrator":
+        cProfile.run("integrator({'shape':[1,100,1], 'layers':[Linear(), "
+                     "Logistic(), Logistic()], 'debug':False}, "
+                     "{'max_epochs':30, 'plotting':False, 'CG_iter':10}, "
+                     "n_inputs=500, sig_len=200, plots=False)",
+                     "profilestats")
+    else:
+        raise ValueError("Unknown profile function")
 
     p = pstats.Stats("profilestats")
     p.strip_dirs().sort_stats('time').print_stats(20)
@@ -219,7 +221,7 @@ def profile_GPU():
 
 
 def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
-                    plots=True):
+               plots=True):
     """Test for a recurrent network, implementing an integrator."""
 
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -269,7 +271,7 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
         plt.show()
 
 
-def plant():
+def plant(plots=True):
     """Example of a network using a dynamic plant as the output layer."""
 
     np.random.seed(0)
@@ -370,7 +372,6 @@ def plant():
 
     rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
-                debug=True,
                 rec_layers=[False, True, True, False],
                 conns={0: [1, 2], 1: [2], 2: [3]},
                 W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
@@ -384,24 +385,25 @@ def plant():
 #                     batch_size=None, test=test, max_epochs=10000,
 #                     plotting=True)
 
-    outputs = rnn.forward(plant, rnn.W)[-1]
+    if plots:
+        outputs = rnn.forward(plant, rnn.W)[-1]
 
-    plt.figure()
-    plt.plot(plant.get_inputs()[:, :, 0].squeeze().T)
-    plt.plot(plant.get_inputs()[:, :, 1].squeeze().T)
-    plt.title("inputs")
+        plt.figure()
+        plt.plot(plant.get_inputs()[:, :, 0].squeeze().T)
+        plt.plot(plant.get_inputs()[:, :, 1].squeeze().T)
+        plt.title("inputs")
 
-    plt.figure()
-    plt.plot(plant.get_targets()[:, :, 0].squeeze().T)
-    plt.plot(plant.get_targets()[:, :, 1].squeeze().T)
-    plt.title("targets")
+        plt.figure()
+        plt.plot(plant.get_targets()[:, :, 0].squeeze().T)
+        plt.plot(plant.get_targets()[:, :, 1].squeeze().T)
+        plt.title("targets")
 
-    plt.figure()
-    plt.plot(outputs[:, :, 0].squeeze().T)
-    plt.plot(outputs[:, :, 1].squeeze().T)
-    plt.title("outputs")
+        plt.figure()
+        plt.plot(outputs[:, :, 0].squeeze().T)
+        plt.plot(outputs[:, :, 1].squeeze().T)
+        plt.title("outputs")
 
-    plt.show()
+        plt.show()
 
 
 if __name__ == "__main__":
