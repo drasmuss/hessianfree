@@ -343,7 +343,8 @@ def test_continuous():
 def test_plant():
     """Example of a network using a dynamic plant as the output layer."""
 
-    n_inputs = 1000
+    np.random.seed(1)
+    n_inputs = 10
     sig_len = 20
 
     class Plant(Nonlinearity):
@@ -374,7 +375,7 @@ def test_plant():
             self.state = (np.dot(self.state, self.A) +
                           np.einsum("ij,ijk->ik", x, self.B_matrix))
 
-            return self.state[:x.shape[0]]
+            return self.state[:x.shape[0]].copy()
             # note: generally x will be the same shape as state, this just
             # handles the case where we're passed a single item instead
             # of batch)
@@ -397,13 +398,13 @@ def test_plant():
         def __call__(self, x):
             self.inputs = np.concatenate((self.inputs, self.state[:, None, :]),
                                          axis=1)
-            return self.state
+            return self.state.copy()
 
         def get_inputs(self):
-            return self.inputs
+            return self.inputs.copy()
 
         def get_targets(self):
-            return self.targets
+            return self.targets.copy()
 
         def reset(self, init=None):
             self.act_count = 0
@@ -426,10 +427,10 @@ def test_plant():
 
     def B(state):
         B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        B[:, 1, 1] = np.cos(state[:, 0])
+        B[:, 1, 1] = 1  # np.cos(state[:, 0])
 
         d_B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        d_B[:, 1, 1] = -np.sin(state[:, 0])
+        d_B[:, 1, 1] = 0  # -np.sin(state[:, 0])
 
         return B, d_B
 
@@ -443,10 +444,10 @@ def test_plant():
 
     rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
-                debug=False,
-                rec_layers=[False, True, True, False],
-                conns={0: [1, 2], 1: [2], 2: [3]},
-                W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
+                debug=True,
+#                 rec_layers=[False, True, True, False],
+#                 conns={0: [1, 2], 1: [2], 2: [3]},
+                )  # W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
 
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,
                                                        init_damping=1),

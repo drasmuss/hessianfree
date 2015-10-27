@@ -131,10 +131,12 @@ class FFNet(object):
             self.init_GPU()
         else:
             def outer_sum(a, b, out=None):
-                if out is not None:
+                if out is None:
+                    # passing out=None fails for some reason
+                    return np.ravel(np.einsum("ij,ik", a, b))
+                else:
                     out = np.reshape(out, (a.shape[1], b.shape[1]))
-
-                return np.ravel(np.einsum("ij,ik", a, b, out=out))
+                    return np.ravel(np.einsum("ij,ik", a, b, out=out))
             self.outer_sum = outer_sum
 
     def run_batches(self, inputs, targets, optimizer,
@@ -376,7 +378,13 @@ class FFNet(object):
         else:
             if transpose:
                 J = np.transpose(J, (0, 2, 1))
-            return np.einsum("ijk,ik->ij", J, vec, out=out)
+
+            if out is None:
+                # passing out=None fails for some reason
+                return np.einsum("ijk,ik->ij", J, vec)
+            else:
+                return np.einsum("ijk,ik->ij", J, vec, out=out)
+
 
     def calc_grad(self):
         """Compute parameter gradient."""

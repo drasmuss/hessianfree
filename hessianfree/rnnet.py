@@ -238,8 +238,12 @@ class RNNet(FFNet):
                                                       out=tmp_act[l])
                         self.J_dot(d_input, state_deltas[l], transpose=True,
                                    out=deltas[l])
-                        self.J_dot(d_state, state_deltas[l], transpose=True,
-                                   out=state_deltas[l])
+
+                        # note: this can't be done in-place, because
+                        # state_deltas is both an input and output (outputs
+                        # get set to zero before the operation)
+                        state_deltas[l] = self.J_dot(d_state, state_deltas[l],
+                                                     transpose=True)
 
                     # gradient for recurrent weights
                     if self.rec_layers[l]:
@@ -384,7 +388,9 @@ class RNNet(FFNet):
                     d_state = self.d_activations[l][:, s, ..., 1]
                     d_output = self.d_activations[l][:, s, ..., 2]
 
-                    self.J_dot(d_state, R_states[l], out=R_states[l])
+
+                    R_states[l] = self.J_dot(d_state, R_states[l])
+
                     R_states[l] += self.J_dot(d_input, R_inputs[l],
                                               out=tmp_act[l])
                     self.J_dot(d_output, R_states[l],
@@ -451,8 +457,8 @@ class RNNet(FFNet):
                                                   out=tmp_act[l])
                         self.J_dot(d_input, R_states[l], transpose=True,
                                    out=R_deltas[l])
-                        self.J_dot(d_state, R_states[l], transpose=True,
-                                   out=R_states[l])
+                        R_states[l] = self.J_dot(d_state, R_states[l],
+                                                 transpose=True)
 
                     # apply structural damping
                     struc_damping = getattr(self.optimizer, "struc_damping",
