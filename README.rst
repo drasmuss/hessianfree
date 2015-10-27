@@ -24,7 +24,7 @@ To make sure things are working, open the python interpreter and enter:
 .. code-block:: python
     
     import hessianfree as hf
-    hf.test.test_xor()
+    hf.demos.xor()
     
 A simple xor training example will run, at the end of which it will display
 the target and actual outputs from the network.
@@ -80,5 +80,5 @@ optimization process.
   versus SGD)
 
 The best way to understand how to use these features is to look through the 
-examples in ``test.py``.
+examples in ``demos.py``.
 

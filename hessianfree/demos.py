@@ -14,13 +14,13 @@ from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL1,
                                     SparseL2, ClassificationError)
 
 
-def test_xor():
+def xor():
     """Run a basic xor training test."""
 
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1], debug=True)
+    ff = FFNet([2, 5, 1])
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -37,7 +37,7 @@ def test_xor():
         print "output", outputs[i]
 
 
-def test_mnist(model_args=None, run_args=None):
+def mnist(model_args=None, run_args=None):
     """Test on the MNIST (digit classification) dataset."""
 
     # download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
@@ -79,33 +79,7 @@ def test_mnist(model_args=None, run_args=None):
                                                                    test[1])
 
 
-def test_softlif():
-    """Example of a network using SoftLIF neurons."""
-
-    lifs = SoftLIF(sigma=1, tau_ref=0.002, tau_rc=0.02, amp=0.01)
-
-    inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
-                        dtype=np.float32)
-    targets = np.asarray([[0.1], [0.9], [0.9], [0.1]], dtype=np.float32)
-
-    ff = FFNet([2, 10, 1], layers=lifs, debug=True)
-
-    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
-                   max_epochs=50, plotting=True)
-
-    # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
-#                    max_epochs=10000, plotting=True)
-
-    outputs = ff.forward(inputs, ff.W)[-1]
-    for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", outputs[i]
-
-
-def test_crossentropy():
+def crossentropy():
     """Example of a network using cross-entropy error."""
 
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
@@ -113,7 +87,7 @@ def test_crossentropy():
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
-               debug=True, loss_type=CrossEntropy())
+               loss_type=CrossEntropy())
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -130,14 +104,14 @@ def test_crossentropy():
         print "output", outputs[i]
 
 
-def test_connections():
+def connections():
     """Example of a network with non-standard connectivity between layers."""
 
     inputs = np.asarray([[0.1, 0.1], [0.1, 0.9], [0.9, 0.1], [0.9, 0.9]],
                         dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 5, 1], layers=Tanh(), debug=True,
+    ff = FFNet([2, 5, 5, 1], layers=Tanh(),
                conns={0: [1, 2], 1: [2, 3], 2: [3]})
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
@@ -155,7 +129,7 @@ def test_connections():
         print "output", outputs[i]
 
 
-def test_sparsity():
+def sparsity():
     """Example of a network with a loss function imposing sparsity on the
     neural activities."""
 
@@ -164,8 +138,7 @@ def test_sparsity():
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
     ff = FFNet([2, 8, 2], layers=[Linear(), Logistic(), Softmax()],
-               debug=True, loss_type=[CrossEntropy(),
-                                      SparseL1(0.1, target=0)])
+               loss_type=[CrossEntropy(), SparseL1(0.1, target=0)])
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=10),
                    max_epochs=100, plotting=True)
@@ -183,18 +156,18 @@ def test_sparsity():
         print "activity", np.mean(output[1][i])
 
 
-def test_profile():
-    """Run a profiler on the code (uses MNIST example)."""
+def profile():
+    """Run a profiler on the code."""
 
     np.random.seed(0)
     import cProfile
     import pstats
 
-#     cProfile.run("test_mnist(None, {'max_epochs':15, 'plotting':False, "
+#     cProfile.run("mnist(None, {'max_epochs':15, 'plotting':False, "
 #                  "'batch_size':7500, 'CG_iter':10})",
 #                  "profilestats")
 
-    cProfile.run("test_integrator({'shape':[1,100,1], 'layers':[Linear(), "
+    cProfile.run("integrator({'shape':[1,100,1], 'layers':[Linear(), "
                  "Logistic(), Logistic()], 'debug':False}, {'max_epochs':30, "
                  "'plotting':False, 'CG_iter':10}, n_inputs=500, "
                  "sig_len=200, plots=False)",
@@ -204,9 +177,9 @@ def test_profile():
     p.strip_dirs().sort_stats('time').print_stats(20)
 
 
-def test_GPU():
-    """Profile CPU vs GPU performance (can be used to adjust the
-    threshold in FFNet.init_GPU)."""
+def profile_GPU():
+    """Profile CPU vs GPU performance (can be used to adjust
+    FFNet.GPU_threshold)."""
 
     import time
     from pycuda import gpuarray
@@ -245,7 +218,7 @@ def test_GPU():
     print times[..., 1] < times[..., 0]
 
 
-def test_integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
+def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
                     plots=True):
     """Test for a recurrent network, implementing an integrator."""
 
@@ -260,8 +233,7 @@ def test_integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
 
     if model_args is None:
         rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
-                    layers=[Linear(), Logistic(), Logistic()],
-                    debug=True)
+                    layers=[Linear(), Logistic(), Logistic()])
     else:
         rnn = RNNet(**model_args)
 
@@ -297,53 +269,10 @@ def test_integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
         plt.show()
 
 
-def test_continuous():
-    """Example of a network using the Continuous nonlinearity."""
-
-    n_inputs = 10
-    sig_len = 50
-    nl = Continuous(Logistic(), tau=np.random.uniform(1, 10, size=10), dt=0.6)
-    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
-                      np.ones(sig_len))[:, :, None]
-    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
-                       np.linspace(0, 1, sig_len))[:, :, None]
-    inputs = inputs.astype(np.float32)
-    targets = targets.astype(np.float32)
-
-    test = (inputs, targets)
-
-    rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
-                layers=[Linear(), nl, Logistic()],
-                debug=False)
-
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    batch_size=None, test=test, max_epochs=100, plotting=True)
-
-    # using gradient descent (for comparison)
-#     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
-#                     batch_size=None, test=test, max_epochs=10000,
-#                     plotting=True)
-
-    plt.figure()
-    plt.plot(inputs.squeeze().T)
-    plt.title("inputs")
-
-    plt.figure()
-    plt.plot(targets.squeeze().T)
-    plt.title("targets")
-
-    outputs = rnn.forward(inputs, rnn.W)[-1]
-    plt.figure()
-    plt.plot(outputs.squeeze().T)
-    plt.title("outputs")
-
-    plt.show()
-
-
-def test_plant():
+def plant():
     """Example of a network using a dynamic plant as the output layer."""
 
-    np.random.seed(1)
+    np.random.seed(0)
     n_inputs = 10
     sig_len = 20
 
@@ -375,7 +304,7 @@ def test_plant():
             self.state = (np.dot(self.state, self.A) +
                           np.einsum("ij,ijk->ik", x, self.B_matrix))
 
-            return self.state[:x.shape[0]].copy()
+            return self.state[:x.shape[0]]
             # note: generally x will be the same shape as state, this just
             # handles the case where we're passed a single item instead
             # of batch)
@@ -398,22 +327,19 @@ def test_plant():
         def __call__(self, x):
             self.inputs = np.concatenate((self.inputs, self.state[:, None, :]),
                                          axis=1)
-            return self.state.copy()
+            return self.state
 
         def get_inputs(self):
-            return self.inputs.copy()
+            return self.inputs
 
         def get_targets(self):
-            return self.targets.copy()
+            return self.targets
 
         def reset(self, init=None):
             self.act_count = 0
             self.d_act_count = 0
             self.state = (self.init_state.copy() if init is None else
                           init.copy())
-#             self.state = self.init_state[
-#                 np.random.choice(np.arange(len(self.init_state)),
-#                                  size=self.shape[0], replace=False)]
             self.inputs = np.zeros((self.shape[0], 0, self.shape[-1]),
                                    dtype=np.float32)
             self.B_matrix = self.d_B_matrix = None
@@ -427,10 +353,10 @@ def test_plant():
 
     def B(state):
         B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        B[:, 1, 1] = 1  # np.cos(state[:, 0])
+        B[:, 1, 1] = np.cos(state[:, 0])
 
         d_B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        d_B[:, 1, 1] = 0  # -np.sin(state[:, 0])
+        d_B[:, 1, 1] = -np.sin(state[:, 0])
 
         return B, d_B
 
@@ -445,9 +371,9 @@ def test_plant():
     rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
                 debug=True,
-#                 rec_layers=[False, True, True, False],
-#                 conns={0: [1, 2], 1: [2], 2: [3]},
-                )  # W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
+                rec_layers=[False, True, True, False],
+                conns={0: [1, 2], 1: [2], 2: [3]},
+                W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
 
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,
                                                        init_damping=1),
@@ -480,10 +406,9 @@ def test_plant():
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        test_xor()
+        xor()
     else:
-        if "test_%s" % sys.argv[1] in locals():
-            locals()["test_%s" % sys.argv[1]](*[ast.literal_eval(a)
-                                                for a in sys.argv[2:]])
+        if sys.argv[1] in locals():
+            locals()[sys.argv[1]](*[ast.literal_eval(a) for a in sys.argv[2:]])
         else:
-            print "Unknown test function (%s)" % sys.argv[1]
+            print "Unknown demo function (%s)" % sys.argv[1]

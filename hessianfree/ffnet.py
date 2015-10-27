@@ -59,7 +59,9 @@ class FFNet(object):
             layers[0] = nonlinearities.Linear()
 
         if len(layers) != len(shape):
-            raise ValueError("Must specify a neuron type for each layer")
+            raise ValueError("Number of nonlinearities (%d) does not match "
+                             "number of layers (%d)" %
+                             (len(layers), len(shape)))
 
         self.layers = []
         for t in layers:
@@ -186,6 +188,15 @@ class FFNet(object):
             # generate minibatch and cache activations
             self.cache_minibatch(inputs, targets, batch_size)
 
+            # validity checks
+            if self.inputs.shape[-1] != self.shape[0]:
+                raise ValueError("Input dimension (%d) does not match number "
+                                 "of input nodes (%d)" %
+                                 (self.inputs.shape[-1], self.shape[0]))
+            if self.targets.shape[-1] != self.shape[-1]:
+                raise ValueError("Target dimension (%d) does not match number "
+                                 "of output nodes (%d)" %
+                                 (self.targets.shape[-1], self.shape[-1]))
             if not(self.inputs.dtype == self.targets.dtype == np.float32):
                 raise TypeError("Input type must be np.float32")
 

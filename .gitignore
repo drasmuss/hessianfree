@@ -2,3 +2,6 @@
 *.pkl
 dist
 *.egg-info
+.*
+*_weights.npy
+*/tests/*.png

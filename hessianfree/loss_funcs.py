@@ -80,7 +80,7 @@ class CrossEntropy(LossFunction):
 class ClassificationError(LossFunction):
     @output_loss
     def loss(self, output, targets):
-        return (np.argmax(output, axis=-1) ==
+        return (np.argmax(output, axis=-1) !=
                 np.argmax(np.nan_to_num(targets), axis=-1))
 
     # note: not defining d_loss or d2_loss; classification error should only
