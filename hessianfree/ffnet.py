@@ -75,7 +75,7 @@ class FFNet(object):
             self.layers += [t]
 
         # initialize loss function
-        self.init_loss(loss_type)
+        self.loss = self.init_loss(loss_type)
 
         # initialize connections
         if conns is None:
@@ -128,7 +128,7 @@ class FFNet(object):
 
         # initialize GPU
         if use_GPU:
-            self.init_GPU()
+            self.outer_sum = self.init_GPU()
         else:
             def outer_sum(a, b, out=None):
                 if out is None:
@@ -573,7 +573,8 @@ class FFNet(object):
             print calc_G / Gv
             raw_input("Paused (press enter to continue)")
 
-    def init_weights(self, conns, coeff=1.0, biases=0.0, init_type="sparse"):
+    def init_weights(self, conns, coeff=1.0, biases=0.0, init_type="sparse",
+                     **kwargs):
         """Weight initialization for given set of connections.
 
         Note: coeff, biases, and init_type can be specified by the
@@ -587,6 +588,8 @@ class FFNet(object):
         :param biases: bias values for the post of each matrix
         :param init_type: type of initialization to use (currently supports
             'sparse', 'uniform', 'gaussian', 'identity')
+        :param kwargs: extra arguments that can be passed to a specific
+            initialization method
         """
 
         # if given single parameters, expand for all layers
@@ -599,6 +602,9 @@ class FFNet(object):
             biases = [biases] * len(conns)
         if isinstance(init_type, str):
             init_type = [init_type] * len(conns)
+        for kw in kwargs:
+            if not isinstance(kwargs[kw], (list, tuple)):
+                kwargs[kw] = [kwargs[kw]] * len(conns)
 
         W = []
 
@@ -635,6 +641,40 @@ class FFNet(object):
                     # fit the shape of pre/post)
                     w[:-1] = zoom(np.eye(pre_s) * coeff[i],
                                   (1, float(post_s) / pre_s))
+                elif init_type[i] == "auto":
+                    # try to find a set of weights that satisfy the equation
+                    # a(x) * W = x (i.e., weights that reproduce the inputs)
+
+                    # TODO: could generalize this to a(x) * W = f(x)
+
+                    # eval_pts specifies the set of x over which the
+                    # optimization will be performed
+                    eval_pts = kwargs.pop("eval_pts", None)
+                    if eval_pts is None:
+                        eval_pts = np.random.randn(10000, pre_s)
+                    else:
+                        eval_pts = eval_pts[i]
+
+                    # run nonlinearity to compute a(x)
+                    self.layers[pre].reset()
+
+                    a = self.layers[pre].activation(eval_pts)
+
+                    if self.layers[pre].stateful:
+                        # run until steady state
+                        a_p = self.layers[pre].activation(eval_pts)
+                        while not np.allclose(a, a_p, atol=1e-10):
+                            a = a_p
+                            a_p = self.layers[pre].activation(eval_pts)
+
+                    b = eval_pts * coeff[i]
+                    x = np.linalg.lstsq(a, b)[0]
+
+                    if pre_s != post_s:
+                        # stretch matrix to fit the shape of post
+                        x = zoom(x, (1, float(post_s) / pre_s))
+
+                    w[:-1] = x
                 else:
                     raise ValueError("Unknown weight initialization (%s)"
                                      % init_type)
@@ -643,6 +683,10 @@ class FFNet(object):
                 w[-1, :] = biases[i]
 
                 W += [w]
+
+        if len(kwargs) > 0:
+            print ("Warning, unused arguments to init_weights (%s)" %
+                   kwargs.keys())
 
         W = np.concatenate([w.flatten() for w in W])
 
@@ -715,9 +759,9 @@ class FFNet(object):
                        "error")
 
         if isinstance(loss_type, (list, tuple)):
-            self.loss = loss_funcs.LossSet(loss_type)
-        else:
-            self.loss = loss_type
+            loss_type = loss_funcs.LossSet(loss_type)
+
+        return loss_type
 
     def init_GPU(self):
         try:
@@ -848,7 +892,7 @@ class FFNet(object):
 
             return out
 
-        self.outer_sum = outer_sum
+        return outer_sum
 
     @property
     def optimizer(self):
