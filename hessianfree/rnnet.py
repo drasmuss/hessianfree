@@ -53,9 +53,9 @@ class RNNet(FFNet):
         # add on recurrent weights
         if kwargs.get("load_weights", None) is None and np.any(rec_layers):
             self.W = np.concatenate(
-                (self.W, self.init_weights([(self.shape[l], self.shape[l])
-                                            for l in range(self.n_layers)
-                                            if rec_layers[l]],
+                (self.W, self.init_weights(dict([(l, [l]) for l in
+                                                 range(self.n_layers)
+                                                 if rec_layers[l]]),
                                            **W_rec_params)))
 
     def forward(self, input, params, deriv=False, init_activations=None,
@@ -96,9 +96,9 @@ class RNNet(FFNet):
             l.reset(None if init_state is None else init_state[i])
 
         W_recs = [self.get_weights(params, (i, i))
-                  for i in np.arange(self.n_layers)]
-        for s in np.arange(sig_len):
-            for i in np.arange(self.n_layers):
+                  for i in range(self.n_layers)]
+        for s in range(sig_len):
+            for i in range(self.n_layers):
                 if i == 0:
                     # get the external input
                     if callable(input):
@@ -166,7 +166,7 @@ class RNNet(FFNet):
 
         grad = np.zeros_like(self.W)
         W_recs = [self.get_weights(self.W, (l, l))
-                  for l in np.arange(self.n_layers)]
+                  for l in range(self.n_layers)]
         batch_size = self.inputs.shape[0]
         sig_len = self.inputs.shape[1]
 
@@ -183,7 +183,7 @@ class RNNet(FFNet):
         else:
             trunc_per, trunc_len = self.truncation
 
-        for n in np.arange(trunc_per - 1, sig_len, trunc_per):
+        for n in range(trunc_per - 1, sig_len, trunc_per):
             # every trunc_per timesteps we want to run backprop
 
             deltas = [np.zeros((batch_size, l), dtype=self.dtype)
@@ -194,7 +194,7 @@ class RNNet(FFNet):
                             for i, l in enumerate(self.layers)]
 
             # backpropagate error
-            for s in np.arange(n, np.maximum(n - trunc_len, -1), -1):
+            for s in range(n, np.maximum(n - trunc_len, -1), -1):
                 # execute trunc_len steps of backprop through time
 
                 error = self.loss.d_loss([a[:, s] for a in self.activations],
@@ -202,7 +202,7 @@ class RNNet(FFNet):
                 error = [np.zeros_like(self.activations[i][:, s]) if e is None
                          else e for i, e in enumerate(error)]
 
-                for l in np.arange(self.n_layers - 1, -1, -1):
+                for l in range(self.n_layers - 1, -1, -1):
                     for post in self.conns[l]:
                         error[l] += np.dot(deltas[post],
                                            self.get_weights(self.W,
@@ -277,7 +277,7 @@ class RNNet(FFNet):
 
         inc_W = np.zeros_like(self.W)
 
-        for n in np.arange(trunc_per, sig_len + 1, trunc_per):
+        for n in range(trunc_per, sig_len + 1, trunc_per):
             start = np.maximum(n - trunc_len, 0)
 
             # the truncated backprop gradient is equivalent to running the
@@ -293,7 +293,7 @@ class RNNet(FFNet):
                 init_a = None
                 init_s = None
 
-            for i in np.arange(len(self.W)):
+            for i in range(len(self.W)):
                 inc_W[:] = 0
                 inc_W[i] = eps
 
@@ -349,12 +349,12 @@ class RNNet(FFNet):
         R_inputs = [np.zeros((batch_size, l), dtype=self.dtype)
                     for l in self.shape]
         v_recs = [self.get_weights(v, (l, l))
-                  for l in np.arange(self.n_layers)]
+                  for l in range(self.n_layers)]
         W_recs = [self.get_weights(self.W, (l, l))
-                  for l in np.arange(self.n_layers)]
+                  for l in range(self.n_layers)]
 
-        for s in np.arange(sig_len):
-            for l in np.arange(self.n_layers):
+        for s in range(sig_len):
+            for l in range(self.n_layers):
                 R_inputs[l][:] = 0
 
                 # input from feedforward connections
@@ -405,18 +405,18 @@ class RNNet(FFNet):
         # note: we're just reusing the memory from R_inputs here, not values
         R_error = R_inputs
 
-        for n in np.arange(trunc_per - 1, sig_len, trunc_per):
+        for n in range(trunc_per - 1, sig_len, trunc_per):
             R_deltas = [np.zeros((batch_size, l), dtype=self.dtype)
                         for l in self.shape]
             for x in R_states:
                 if x is not None:
                     x[...] = 0
 
-            for s in np.arange(n, np.maximum(n - trunc_len, -1), -1):
+            for s in range(n, np.maximum(n - trunc_len, -1), -1):
                 error = self.loss.d2_loss([a[:, s] for a in self.activations],
                                           self.targets[:, s])
 
-                for l in np.arange(self.n_layers - 1, -1, -1):
+                for l in range(self.n_layers - 1, -1, -1):
                     if error[l] is not None:
                         R_error[l] = error[l] * R_activations[l][:, s]
                     else:
@@ -546,7 +546,7 @@ class RNNet(FFNet):
 
         G = np.zeros((len(self.W), len(self.W)))
 
-        for n in np.arange(trunc_per, sig_len + 1, trunc_per):
+        for n in range(trunc_per, sig_len + 1, trunc_per):
             start = np.maximum(n - trunc_len, 0)
 
             # compute Jacobian
@@ -590,7 +590,7 @@ class RNNet(FFNet):
 
         # offset for recurrent weights is end of ff weights
         offset = ff_offset
-        for l in np.arange(self.n_layers):
+        for l in range(self.n_layers):
             if self.rec_layers[l]:
                 self.offsets[(l, l)] = (
                     offset,

@@ -13,6 +13,7 @@ from collections import defaultdict, OrderedDict
 from copy import deepcopy
 
 import numpy as np
+from scipy.ndimage.interpolation import zoom
 
 from hessianfree import nonlinearities, loss_funcs
 
@@ -109,10 +110,7 @@ class FFNet(object):
 
         # initialize connection weights
         if load_weights is None:
-            self.W = self.init_weights(
-                [(self.shape[pre], self.shape[post])
-                 for pre in self.conns for post in self.conns[pre]],
-                **W_init_params)
+            self.W = self.init_weights(self.conns, **W_init_params)
         else:
             if isinstance(load_weights, np.ndarray):
                 self.W = load_weights
@@ -575,57 +573,76 @@ class FFNet(object):
             print calc_G / Gv
             raw_input("Paused (press enter to continue)")
 
-    def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
-        """Weight initialization, given shapes of weight matrices.
+    def init_weights(self, conns, coeff=1.0, biases=0.0, init_type="sparse"):
+        """Weight initialization for given set of connections.
 
         Note: coeff, biases, and init_type can be specified by the
         W_init_params parameter in __init__.  Each can be specified as a
-        single value (for all matrices) or as a list giving a value for each
-        matrix.
+        single value (for all layers) or as a list giving a value for each
+        layer.
 
-        :param shapes: list of (pre,post) shapes for each weight matrix
+        :param conns: connection dictionary, as defined in
+            __init__(..., conns=...), ordered by layer number
         :param coeff: scales the magnitude of the connection weights
         :param biases: bias values for the post of each matrix
         :param init_type: type of initialization to use (currently supports
-            'sparse', 'uniform', 'gaussian')
+            'sparse', 'uniform', 'gaussian', 'identity')
         """
 
-        # if given single parameters, expand for all matrices
+        # if given single parameters, expand for all layers
+        # note: could change this to specify a different number for each
+        # weight matrix (pre*post), rather than for each layer (pre), if that
+        # seemed necessary in some use case.
         if isinstance(coeff, (int, float)):
-            coeff = [coeff] * len(shapes)
+            coeff = [coeff] * len(conns)
         if isinstance(biases, (int, float)):
-            biases = [biases] * len(shapes)
+            biases = [biases] * len(conns)
         if isinstance(init_type, str):
-            init_type = [init_type] * len(shapes)
+            init_type = [init_type] * len(conns)
 
-        W = [np.zeros((pre + 1, post), dtype=self.dtype)
-             for pre, post in shapes]
+        W = []
 
-        for i, s in enumerate(shapes):
-            if init_type[i] == "sparse":
-                # sparse initialization (from martens)
-                num_conn = 15
+        for i, pre in enumerate(conns):
+            for post in conns[pre]:
+                pre_s = self.shape[pre]
+                post_s = self.shape[post]
+                w = np.zeros((pre_s + 1, self.shape[post]), dtype=self.dtype)
 
-                for j in range(s[1]):
-                    # pick num_conn random pre neurons
-                    indices = np.random.choice(np.arange(s[0]),
-                                               size=min(num_conn, s[0]),
-                                               replace=False)
+                if init_type[i] == "sparse":
+                    # sparse initialization (from martens)
+                    num_conn = 15
 
-                    # connect to post
-                    W[i][indices, j] = np.random.randn(indices.size) * coeff[i]
-            elif init_type[i] == "uniform":
-                W[i][:-1] = np.random.uniform(-coeff[i] / np.sqrt(s[0]),
-                                              coeff[i] / np.sqrt(s[0]),
-                                              (s[0], s[1]))
-            elif init_type[i] == "gaussian":
-                W[i][:-1] = np.random.randn(s[0], s[1]) * coeff[i]
-            else:
-                raise ValueError("Unknown weight initialization (%s)"
-                                 % init_type)
+                    for j in range(post_s):
+                        # pick num_conn random pre neurons
+                        indices = np.random.choice(np.arange(pre_s),
+                                                   size=min(num_conn, pre_s),
+                                                   replace=False)
 
-            # set biases
-            W[i][-1, :] = biases[i]
+                        # connect to post
+                        w[indices, j] = np.random.randn(indices.size)
+                        w[indices, j] *= coeff[i]
+                elif init_type[i] == "uniform":
+                    # sample uniformly (default scaled based on size of pre)
+                    w[:-1] = np.random.uniform(-coeff[i] / np.sqrt(pre_s),
+                                               coeff[i] / np.sqrt(pre_s),
+                                               (pre_s, post_s))
+                elif init_type[i] == "gaussian":
+                    # sample from N(0,1)
+                    w[:-1] = np.random.randn(pre_s, post_s)
+                    w[:-1] *= coeff[i]
+                elif init_type[i] == "identity":
+                    # set the transform to the identity matrix (stretched to
+                    # fit the shape of pre/post)
+                    w[:-1] = zoom(np.eye(pre_s) * coeff[i],
+                                  (1, float(post_s) / pre_s))
+                else:
+                    raise ValueError("Unknown weight initialization (%s)"
+                                     % init_type)
+
+                # set biases
+                w[-1, :] = biases[i]
+
+                W += [w]
 
         W = np.concatenate([w.flatten() for w in W])
 
