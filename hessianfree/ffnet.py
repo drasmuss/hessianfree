@@ -8,9 +8,11 @@ Martens, J. (2010). Deep learning via Hessian-free optimization. In Proceedings
 of the 27th International Conference on Machine Learning.
 """
 
-import pickle
+
 from collections import defaultdict, OrderedDict
 from copy import deepcopy
+from functools import partial
+import pickle
 
 import numpy as np
 
@@ -132,14 +134,8 @@ class FFNet(object):
         if use_GPU:
             self.init_GPU()
         else:
-            def outer_sum(a, b, out=None):
-                if out is None:
-                    # passing out=None fails for some reason
-                    return np.ravel(np.einsum("ij,ik", a, b))
-                else:
-                    out = np.reshape(out, (a.shape[1], b.shape[1]))
-                    return np.ravel(np.einsum("ij,ik", a, b, out=out))
-            self.outer_sum = outer_sum
+
+            self.outer_sum = self._outer_sum
 
     def run_batches(self, inputs, targets, optimizer,
                     max_epochs=1000, batch_size=None, test=None,
@@ -292,8 +288,18 @@ class FFNet(object):
 
         if self.use_GPU:
             from pycuda import gpuarray
-            self.GPU_activations = [gpuarray.to_gpu(a)
+            # TODO: only add the cast to np.float32 if debug==True
+            self.GPU_activations = [gpuarray.to_gpu(a.astype(np.float32))
                                     for a in self.activations]
+            self.GPU_d_activations = [gpuarray.to_gpu(a.astype(np.float32))
+                                      for a in self.d_activations]
+            self.GPU_W = gpuarray.to_gpu(self.W.astype(np.float32))
+            self.GPU_d2_loss = [gpuarray.to_gpu(a.astype(np.float32))
+                                if a is not None else None
+                                for a in self.loss.d2_loss(self.activations,
+                                                           self.targets)]
+            self.GPU_tmp_space = [gpuarray.zeros(a.shape, np.float32)
+                                  for a in self.activations]
         else:
             self.GPU_activations = None
 
@@ -429,8 +435,9 @@ class FFNet(object):
                 offset, W_end, b_end = self.offsets[(i, post)]
 
                 self.outer_sum(
-                    self.activations[i] if self.GPU_activations is None
-                    else [i], deltas[post], out=grad[offset:W_end])
+                    self.GPU_activations[i] if self.use_GPU
+                    else self.activations[i],
+                    deltas[post], out=grad[offset:W_end])
                 np.sum(deltas[post], axis=0, out=grad[W_end:b_end])
 
             self.J_dot(self.d_activations[i], error[i],
@@ -506,8 +513,9 @@ class FFNet(object):
 
                 offset, W_end, b_end = self.offsets[(i, post)]
                 self.outer_sum(
-                    self.activations[i] if self.GPU_activations is None
-                    else [i], R_deltas[post], out=Gv[offset:W_end])
+                    self.GPU_activations[i] if self.use_GPU is None
+                    else self.activations[i],
+                    R_deltas[post], out=Gv[offset:W_end])
                 np.sum(R_deltas[post], axis=0, out=Gv[W_end:b_end])
 
             self.J_dot(self.d_activations[i], R_error[i],
@@ -518,6 +526,88 @@ class FFNet(object):
         Gv += damping * v  # Tikhonov damping
 
         return Gv
+
+
+    def GPU_calc_G(self, v, damping=0):
+        from pycuda import gpuarray
+
+        GPU_v = gpuarray.to_gpu(v.astype(np.float32))
+
+        # TODO: there are a bunch of memory optimizations here that we could
+        # probably port to the standard calc_G
+
+        # R forward pass
+
+        # note: both of these just point to tmp_space, just keeping the
+        # different variables here for consistency with calc_G
+        R_input = self.GPU_tmp_space
+        R_activations = R_input
+
+        for i in range(self.n_layers):
+            R_input[i].fill(0)
+            for pre in self.back_conns[i]:
+                vw, vb = self.get_weights(GPU_v, (pre, i))
+                Ww, _ = self.get_weights(self.GPU_W, (pre, i))
+#                 offset, W_end, b_end = self.offsets[(pre, i)]
+
+                self.m_dot(self.GPU_activations[pre], vw,  # GPU_v[offset:W_end],
+                           out=R_input[i], increment=True)
+                for batch in R_input[i]:
+                    # TODO: implement broadcasted version of +=
+                    batch += vb  # GPU_v[W_end:b_end]
+#                 R_input += vb
+
+                self.m_dot(R_activations[pre], Ww,  # self.GPU_W[offset:W_end],
+                           out=R_input[i], increment=True)
+
+#             self.J_dot(self.d_activations[i], R_input,
+#                        out=R_activations[i])
+            # TODO: implement this for non-diagonal d_activations
+            R_activations[i] *= self.GPU_d_activations[i]
+
+        # backward pass
+        Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
+        R_error = R_activations
+        R_deltas = R_error
+
+        for i in range(self.n_layers - 1, -1, -1):
+            if self.GPU_d2_loss[i] is not None:
+                # note: R_error[i] is already set to R_activations[i]
+                R_error[i] *= self.GPU_d2_loss[i]
+            else:
+                R_error[i].fill(0)
+
+            for post in self.conns[i]:
+                W, _ = self.get_weights(self.GPU_W, (i, post))
+                offset, W_end, b_end = self.offsets[(i, post)]
+
+                self.m_dot(R_deltas[post], W,  # self.GPU_W[offset:W_end],
+                           transpose_b=True, out=R_error[i], increment=True)
+#                 R_error[i] += self.m_dot(R_deltas[post], W,
+#                                          transpose_b=True)
+#                 tmp = R_error[i].copy()
+#                 self.m_dot(R_deltas[post], W,  # self.GPU_W[offset:W_end],
+#                            transpose_b=True, out=tmp, increment=True)
+#                 R_error[i][...] = tmp
+
+                self.outer_sum(self.GPU_activations[i], R_deltas[post],
+                               out=Gv[offset:W_end])
+
+                self.sum_axis(R_deltas[post], 0, out=Gv[W_end:b_end])
+
+#             self.J_dot(self.d_activations[i], R_error[i],
+#                        out=R_deltas[i])
+            R_deltas[i] *= self.GPU_d_activations[i]
+
+#         test = Gv.get()
+
+        Gv /= len(self.inputs)
+
+        # Tikhonov damping
+        GPU_v *= damping
+        Gv += GPU_v
+
+        return Gv.get()
 
     def check_J(self):
         """Compute the Jacobian of the network via finite differences."""
@@ -664,6 +754,8 @@ class FFNet(object):
         W = params[offset:W_end]
         b = params[W_end:b_end]
 
+        # TODO: double check that reshape returns a view, not a copy for
+        # gpuarrays
         result = (W.reshape((self.shape[conn[0]], self.shape[conn[1]])),
                   b)
 
@@ -704,134 +796,135 @@ class FFNet(object):
 
     def init_GPU(self):
         try:
-            import pycuda.autoinit
-            import pycuda.driver as drv
-            from pycuda.compiler import SourceModule
+            import hessianfree.gpu
+            import pycuda
             from pycuda import gpuarray
-        except:
+        except Exception, e:
+            print e
             raise ImportError("PyCuda not installed, or no compatible device "
                               "detected. Set use_GPU=False.")
 
         dev = pycuda.autoinit.device
         print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
-        self.num_threads = dev.MAX_THREADS_PER_BLOCK
 
         # if the outer product has fewer than this many entries (per batch),
         # then we'll just compute outer_sum on the CPU
-        self.GPU_threshold = 2 ** 16
+#         self.GPU_threshold = 2 ** 16
 
-        # this one operation in the gradient/Gv calculations is where
-        # most of the computational work can be this algorithm, so
-        # parallelizing it on the GPU can be pretty helpful.
-        mod = SourceModule("""
-        __global__ void outer_sum(float *a, float *b, float *out,
-                                  int batch_size)
-        {
-            int a_i = blockIdx.x*blockDim.x + threadIdx.x;
-            int b_i = blockIdx.y*blockDim.y + threadIdx.y;
-            const int a_len = blockDim.x * gridDim.x;
-            const int b_len = blockDim.y * gridDim.y;
-            const int out_addr = a_i*b_len + b_i;
+        def outer_sum(a, b, out=None):
+            # this wrapper handles loading data on/off the GPU if it isn't
+            # there already
 
-            out[out_addr] = 0;
-            for(int j=0; j < batch_size; j++) {
-                out[out_addr] += a[a_i] * b[b_i];
-                a_i += a_len;
-                b_i += b_len;
-            }
-        }
-        """)
+            # load everything onto the gpu
+            if not isinstance(a, gpuarray.GPUArray):
+                if self.debug:
+                    a = a.astype(np.float32)
+                a = gpuarray.to_gpu(a)
+            if not isinstance(b, gpuarray.GPUArray):
+                if self.debug:
+                    b = b.astype(np.float32)
+                b = gpuarray.to_gpu(b)
 
-        def find_block_len(n_threads, threads_per, vec_len):
-            # need to divide n_threads into blocks of size n*threads_per. we
-            # want n to be as large as possible, so we use all the threads in
-            # a block. but vec_len also needs to be evenly divisible by n (I
-            # don't think it's possible to have different sized blocks in
-            # different grid cells). so we want the highest factor of vec_len
-            # that is <= n_threads/threads_per.
-            start = int(n_threads / threads_per)
+            # note: no point copying 'out' to the GPU if it isn't already
+            # a GPUarray
+            out_GPU = out if isinstance(out, gpuarray.GPUArray) else None
 
-            if start >= vec_len:
-                return np.asscalar(vec_len)
-
-            mid = int(np.sqrt(vec_len))
-            for n in range(start, 0 if start < mid else mid - 1, -1):
-                if vec_len % n == 0:
-                    return n
-
-            return 1
-
-        def outer_sum(in_a, in_b, out=None):
-            if isinstance(in_a, (list, tuple)):
-                # load pre-cached GPU activations
-                a = self.GPU_activations
-                for idx in in_a:
-                    a = a[idx]
-            else:
-                a = in_a
-            b = in_b  # b is never cached
-
-            a_len = np.int32(a.shape[1])
-            b_len = np.int32(b.shape[1])
-            batchsize = np.int32(a.shape[0])  # assume == b.shape[0]
-
-            if out is None:
-                out = np.zeros(a_len * b_len, dtype=np.float32)
-
-            if a_len * b_len < self.GPU_threshold:
-                # just do it on the CPU
-                if isinstance(in_a, (list, tuple)):
-                    a = self.activations
-                    for idx in in_a:
-                        a = a[idx]
-                return np.ravel(np.einsum("ij,ik", a, b,
-                                          out=out.reshape((a_len, b_len))))
+            out_GPU = hessianfree.gpu.outer_sum(a, b, out_GPU)
 
             if self.debug:
-                # convert the 64 bit values to 32 bit
-                a = a.astype(np.float32)
-                b = b.astype(np.float32)
+                tmp_a = a.get()
+                tmp_b = b.get()
+                tmp_out = out_GPU.get()
 
-            assert a.dtype == b.dtype == np.float32
-
-            cols_per_block = find_block_len(self.num_threads, 1, b_len)
-            rows_per_block = find_block_len(self.num_threads, cols_per_block,
-                                            a_len)
-
-            # load data onto gpu (if it isn't there already)
-            a_gpu = (a if isinstance(a, gpuarray.GPUArray) else drv.In(a))
-            b_gpu = (b if isinstance(b, gpuarray.GPUArray) else drv.In(b))
-            out_gpu = drv.Out(out)
-
-            # execute function
-            gpu_outer = mod.get_function("outer_sum")
-            gpu_outer(a_gpu, b_gpu, out_gpu, batchsize,
-                      grid=(a_len / rows_per_block, b_len / cols_per_block),
-                      block=(rows_per_block, cols_per_block, 1))
-
-            if self.debug:
-                if isinstance(a, gpuarray.GPUArray):
-                    tmp_a = np.zeros(a.shape, dtype=np.float32)
-                    a.get(tmp_a)
-                else:
-                    tmp_a = a
-                if isinstance(b, gpuarray.GPUArray):
-                    tmp_b = np.zeros(b.shape, dtype=np.float32)
-                    b.get(tmp_b)
-                else:
-                    tmp_b = b
                 truth = np.ravel(np.einsum("ij,ik", tmp_a, tmp_b))
                 try:
-                    assert np.allclose(out, truth, atol=1e-4)
+                    assert np.allclose(tmp_out, truth, atol=1e-4)
                 except AssertionError:
-                    print out
+                    print tmp_out
                     print truth
-                    print out - truth
+                    print tmp_out - truth
                     raise
+
+#             if out_CPU:
+#                 # pull data back to CPU
+#                 if out is not None and not isinstance(out, gpuarray.GPUArray):
+#                     out[...] = out_GPU.get()
+#                 else:
+#                     out = out_GPU.get()
+#             else:
+#                 out = out_GPU
+
+            if out is not None and not isinstance(out, gpuarray.GPUArray):
+                out[...] = out_GPU.get()
+            else:
+                out = out_GPU
 
             return out
 
         self.outer_sum = outer_sum
+
+        # note: m_dot assumes that everything is already loaded onto the GPU
+        def m_dot(a, b, out=None, transpose_b=False, increment=False):
+            if self.debug and increment:
+                out_cpy = out.get()
+
+            out = hessianfree.gpu.m_dot(a, b, out, transpose_b, increment)
+
+            if self.debug:
+                tmp_a = a.get()
+                tmp_b = b.get()
+                tmp_out = out.get()
+
+                if transpose_b:
+                    tmp_b = np.reshape(tmp_b,
+                                       (tmp_b.size / a.shape[1], a.shape[1]))
+                    truth = np.dot(tmp_a, tmp_b.T)
+                else:
+                    tmp_b = np.reshape(tmp_b,
+                                       (a.shape[1], tmp_b.size / a.shape[1]))
+                    truth = np.dot(tmp_a, tmp_b)
+
+                if increment:
+                    truth += out_cpy
+
+                try:
+                    assert np.allclose(tmp_out, truth, atol=1e-4)
+                except AssertionError:
+                    print tmp_out
+                    print truth
+                    print tmp_out - truth
+                    raise
+
+            return out
+        self.m_dot = m_dot
+
+        def sum_axis(a, axis, out=None):
+            out = hessianfree.gpu.sum_axis(a, axis, out)
+
+            if self.debug:
+                tmp_a = a.get()
+                tmp_out = out.get()
+
+                truth = np.sum(tmp_a, axis=axis)
+                try:
+                    assert np.allclose(tmp_out, truth, atol=1e-4)
+                except AssertionError:
+                    print tmp_out
+                    print truth
+                    print tmp_out - truth
+                    raise
+
+            return out
+        self.sum_axis = sum_axis
+
+
+    def _outer_sum(self, a, b, out=None):
+        if out is None:
+            # passing out=None fails for some reason
+            return np.ravel(np.einsum("ij,ik", a, b))
+        else:
+            out = np.reshape(out, (a.shape[1], b.shape[1]))
+            return np.ravel(np.einsum("ij,ik", a, b, out=out))
 
     @property
     def optimizer(self):

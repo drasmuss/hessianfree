@@ -20,7 +20,8 @@ def xor():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1])
+    ff = FFNet([2, 5, 1], use_GPU=True, debug=True)
+    ff.GPU_threshold = 0
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -155,28 +156,38 @@ def sparsity():
         print "activity", np.mean(output[1][i])
 
 
-def profile(func):
+def profile(func, max_epochs=15, CPU=True):
     """Run a profiler on the code."""
 
     np.random.seed(0)
-    import cProfile
-    import pstats
 
     if func == "mnist":
-        cProfile.run("mnist(None, {'max_epochs':15, 'plotting':False, "
-                     "'batch_size':7500, 'CG_iter':10})",
-                     "profilestats")
+        eval_str = ("mnist(None, {'max_epochs':%d, 'plotting':False, "
+                    "'batch_size':7500, 'CG_iter':10})") % max_epochs
     elif func == "integrator":
-        cProfile.run("integrator({'shape':[1,100,1], 'layers':[Linear(), "
-                     "Logistic(), Logistic()], 'debug':False}, "
-                     "{'max_epochs':30, 'plotting':False, 'CG_iter':10}, "
-                     "n_inputs=500, sig_len=200, plots=False)",
-                     "profilestats")
+        eval_str = ("integrator({'shape':[1,100,1], 'layers':[Linear(), "
+                    "Logistic(), Logistic()], 'debug':False}, "
+                    "{'max_epochs':%d, 'plotting':False, 'CG_iter':10}, "
+                    "n_inputs=500, sig_len=200, plots=False)") % max_epochs
     else:
         raise ValueError("Unknown profile function")
 
-    p = pstats.Stats("profilestats")
-    p.strip_dirs().sort_stats('time').print_stats(20)
+    if CPU:
+        import cProfile
+        import pstats
+        cProfile.run(eval_str, "profilestats")
+        p = pstats.Stats("profilestats")
+        p.strip_dirs().sort_stats('time').print_stats(20)
+
+    else:
+        import pycuda
+
+        # assume that this is being run through cuda visual profiler
+        eval(eval_str)
+
+        # flush out profile data
+#         pycuda.driver.stop_profiler()
+
 
 
 def profile_GPU():

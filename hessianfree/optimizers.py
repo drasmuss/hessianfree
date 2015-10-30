@@ -164,7 +164,10 @@ class HessianFree(Optimizer):
                 print "delta norm", np.linalg.norm(delta)
                 print "direction norm", np.linalg.norm(direction)
 
-            G_dir = self.net.calc_G(direction, damping=self.damping)
+            if self.net.use_GPU:
+                G_dir = self.net.GPU_calc_G(direction, damping=self.damping)
+            else:
+                G_dir = self.net.calc_G(direction, damping=self.damping)
 
             # calculate step size
             step = res_norm / np.dot(direction, G_dir)
