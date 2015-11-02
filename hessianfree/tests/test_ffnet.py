@@ -9,12 +9,6 @@ from hessianfree.optimizers import HessianFree, SGD
 from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL1,
                                     SparseL2, ClassificationError)
 
-try:
-    import pycuda
-    pycuda_installed = True
-except ImportError:
-    pycuda_installed = False
-
 
 def test_xor():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
@@ -42,26 +36,6 @@ def test_SGD():
     outputs = ff.forward(inputs, ff.W)
 
     assert ff.loss.batch_loss(outputs, targets) < 1e-3
-
-
-@pytest.mark.skipif(not pycuda_installed, reason="PyCUDA not installed")
-def test_GPU():
-    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
-    targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
-
-    ff = FFNet([2, 5, 1], debug=True, use_GPU=True)
-    ff.GPU_threshold = 0
-
-    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
-                   max_epochs=40)
-
-    # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
-#                    max_epochs=10000, plotting=True)
-
-    outputs = ff.forward(inputs, ff.W)
-
-    assert ff.loss.batch_loss(outputs, targets) < 1e-5
 
 
 def test_softlif():

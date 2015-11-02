@@ -1,6 +1,8 @@
-import pickle
-import sys
 import ast
+from cProfile import Profile
+import pickle
+import pstats
+import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,7 +23,6 @@ def xor():
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
     ff = FFNet([2, 5, 1], use_GPU=True, debug=True)
-    ff.GPU_threshold = 0
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -156,79 +157,38 @@ def sparsity():
         print "activity", np.mean(output[1][i])
 
 
-def profile(func, max_epochs=15, CPU=True):
+def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
     """Run a profiler on the code."""
 
     np.random.seed(0)
 
+    if cprofile:
+        p = Profile()
+        p.enable()
+    else:
+        import pycuda
+        pycuda.driver.start_profiler()
+
     if func == "mnist":
-        eval_str = ("mnist(None, {'max_epochs':%d, 'plotting':False, "
-                    "'batch_size':7500, 'CG_iter':10})") % max_epochs
+        mnist({'use_GPU': use_GPU},
+              {'max_epochs': max_epochs, 'plotting': False, 'batch_size': 7500,
+               'CG_iter': 10})
     elif func == "integrator":
-        eval_str = ("integrator({'shape':[1,100,1], 'layers':[Linear(), "
-                    "Logistic(), Logistic()], 'debug':False}, "
-                    "{'max_epochs':%d, 'plotting':False, 'CG_iter':10}, "
-                    "n_inputs=500, sig_len=200, plots=False)") % max_epochs
+        integrator({'shape': [1, 100, 1], 'layers': Logistic(),
+                    'use_GPU': use_GPU, 'debug': False},
+                   {'max_epochs': max_epochs, 'plotting': False,
+                    'CG_iter': 10},
+                   n_inputs=500, sig_len=200, plots=False)
     else:
         raise ValueError("Unknown profile function")
 
-    if CPU:
-        import cProfile
-        import pstats
-        cProfile.run(eval_str, "profilestats")
-        p = pstats.Stats("profilestats")
-        p.strip_dirs().sort_stats('time').print_stats(20)
+    if cprofile:
+        p.disable()
 
+        ps = pstats.Stats(p)
+        ps.strip_dirs().sort_stats('time').print_stats(20)
     else:
-        import pycuda
-
-        # assume that this is being run through cuda visual profiler
-        eval(eval_str)
-
-        # flush out profile data
-#         pycuda.driver.stop_profiler()
-
-
-
-def profile_GPU():
-    """Profile CPU vs GPU performance (can be used to adjust
-    FFNet.GPU_threshold)."""
-
-    import time
-    from pycuda import gpuarray
-
-    ff = FFNet([1, 1], use_GPU=True, debug=False)
-
-    # we always want to run on GPU
-    ff.GPU_threshold = 0
-
-    gpu = ff.outer_sum
-    cpu = lambda a, b: np.ravel(np.einsum("ij,ik", a, b))
-
-    vec_size = 11
-    batch_size = 11
-    reps = 100
-    times = np.zeros((vec_size, batch_size, 2))
-    for n in range(vec_size):
-        for b in range(batch_size):
-            x = np.random.randn(2 ** b, 2 ** n).astype(np.float32)
-            y = np.random.randn(2 ** b, 2 ** n).astype(np.float32)
-
-            start = time.time()
-            for _ in range(reps):
-                _ = cpu(x, y)
-            times[n, b, 0] = time.time() - start
-
-            start = time.time()
-            ff.GPU_activations = [gpuarray.to_gpu(x)]
-            for _ in range(reps):
-                _ = gpu([0], y)
-            times[n, b, 1] = time.time() - start
-
-            print "n", n, "b", b, "times", times[n, b]
-
-    print times
-    print times[..., 1] < times[..., 0]
+        pycuda.driver.stop_profiler()
 
 
 def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
@@ -322,7 +282,7 @@ def plant(plots=True):
             # handles the case where we're passed a single item instead
             # of batch)
 
-        def d_activation(self, x, a):
+        def d_activation(self, x, _):
             self.d_act_count += 1
             assert self.act_count == self.d_act_count
 
@@ -337,7 +297,7 @@ def plant(plots=True):
 
             return np.concatenate((d_input, d_state, self.d_output), axis=-1)
 
-        def __call__(self, x):
+        def __call__(self, _):
             self.inputs = np.concatenate((self.inputs, self.state[:, None, :]),
                                          axis=1)
             return self.state

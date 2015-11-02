@@ -191,7 +191,7 @@ class HessianFree(Optimizer):
             residual -= step * G_dir
             new_res_norm = np.dot(residual, residual)
 
-            if new_res_norm < 1e-20:
+            if new_res_norm < 1e-30:
                 # early termination (mainly to prevent numerical errors);
                 # the main termination condition is below.
                 break

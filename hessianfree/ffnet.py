@@ -529,8 +529,10 @@ class FFNet(object):
 
 
     def GPU_calc_G(self, v, damping=0):
-        from pycuda import gpuarray
+        from pycuda import gpuarray, driver
 
+        Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
+#         CPU_Gv = np.zeros_like(self.W)
         GPU_v = gpuarray.to_gpu(v.astype(np.float32))
 
         # TODO: there are a bunch of memory optimizations here that we could
@@ -566,7 +568,6 @@ class FFNet(object):
             R_activations[i] *= self.GPU_d_activations[i]
 
         # backward pass
-        Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
         R_error = R_activations
         R_deltas = R_error
 
@@ -577,18 +578,18 @@ class FFNet(object):
             else:
                 R_error[i].fill(0)
 
+#             start = self.W.size
+#             stop = 0
+
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.GPU_W, (i, post))
                 offset, W_end, b_end = self.offsets[(i, post)]
 
+#                 start = min(offset, start)
+#                 stop = max(b_end, stop)
+
                 self.m_dot(R_deltas[post], W,  # self.GPU_W[offset:W_end],
                            transpose_b=True, out=R_error[i], increment=True)
-#                 R_error[i] += self.m_dot(R_deltas[post], W,
-#                                          transpose_b=True)
-#                 tmp = R_error[i].copy()
-#                 self.m_dot(R_deltas[post], W,  # self.GPU_W[offset:W_end],
-#                            transpose_b=True, out=tmp, increment=True)
-#                 R_error[i][...] = tmp
 
                 self.outer_sum(self.GPU_activations[i], R_deltas[post],
                                out=Gv[offset:W_end])
@@ -599,7 +600,10 @@ class FFNet(object):
 #                        out=R_deltas[i])
             R_deltas[i] *= self.GPU_d_activations[i]
 
-#         test = Gv.get()
+#             if start < stop:
+#                 Gv[start:stop].get_async(ary=CPU_Gv[start:stop], stream=stream)
+
+#         stream.synchronize()
 
         Gv /= len(self.inputs)
 
@@ -607,7 +611,7 @@ class FFNet(object):
         GPU_v *= damping
         Gv += GPU_v
 
-        return Gv.get()
+        return Gv.get(pagelocked=True)
 
     def check_J(self):
         """Compute the Jacobian of the network via finite differences."""
@@ -811,6 +815,8 @@ class FFNet(object):
         # then we'll just compute outer_sum on the CPU
 #         self.GPU_threshold = 2 ** 16
 
+        # TODO: get rid of these awkward/repetitive wrappers
+
         def outer_sum(a, b, out=None):
             # this wrapper handles loading data on/off the GPU if it isn't
             # there already
@@ -864,11 +870,13 @@ class FFNet(object):
         self.outer_sum = outer_sum
 
         # note: m_dot assumes that everything is already loaded onto the GPU
-        def m_dot(a, b, out=None, transpose_b=False, increment=False):
+        def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
+                  increment=False):
             if self.debug and increment:
                 out_cpy = out.get()
 
-            out = hessianfree.gpu.m_dot(a, b, out, transpose_b, increment)
+            out = hessianfree.gpu.m_dot(a, b, out, transpose_a, transpose_b,
+                                        increment)
 
             if self.debug:
                 tmp_a = a.get()
@@ -890,9 +898,14 @@ class FFNet(object):
                 try:
                     assert np.allclose(tmp_out, truth, atol=1e-4)
                 except AssertionError:
+                    print "out"
                     print tmp_out
+                    print "truth"
                     print truth
+                    print "out-truth"
                     print tmp_out - truth
+                    print "out/truth"
+                    print tmp_out / truth
                     raise
 
             return out
