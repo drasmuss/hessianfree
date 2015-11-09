@@ -76,18 +76,38 @@ __global__ void sum_axis(float *A, float *out, int axis, int a0, int a1)
 	int step = 0;
 	if (axis == 0)
 	{
+	    if (a_i >= a1)
+	       return;
 		start = a_i;
 		stop = a0*a1;
 		step = a1;
 	}
 	else
 	{
+	    if (a_i >= a0)
+	       return;
 		start = a_i*a1;
 		stop = start + a1;
 		step = 1;
 	}
 
-	out[a_i] = 0;
+	float sum = 0;
 	for (int i = start; i < stop; i += step)
-		out[a_i] += A[i];
+		sum += A[i];
+	out[a_i] = sum;
+}
+
+__global__ void iadd(float *A, float *B, int a0, int a1)
+{
+    const int a_i = blockDim.x*blockIdx.x + threadIdx.x;
+    
+    if (a_i >= a1)
+        return;
+    
+    const int max = a0*a1;
+    const float b_val = B[a_i];
+    
+    for (int i=a_i; i < max; i+=a1)
+        A[i] += b_val;
+    
 }

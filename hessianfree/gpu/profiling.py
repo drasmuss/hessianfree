@@ -9,60 +9,24 @@ import pycuda
 import pycuda.autoinit
 from pycuda import gpuarray
 
-from hessianfree import FFNet
-from hessianfree.gpu import m_dot, simple_m_dot, outer_sum
-
-
-def theshold_outer_sum():
-    """Profile CPU vs GPU performance (can be used to adjust
-    FFNet.GPU_threshold)."""
-
-    ff = FFNet([1, 1], use_GPU=True, debug=False)
-
-    # we always want to run on GPU
-    ff.GPU_threshold = 0
-
-    gpu = ff.outer_sum
-    cpu = ff._outer_sum
-
-    vec_size = 11
-    batch_size = 11
-    reps = 100
-    times = np.zeros((vec_size, batch_size, 2))
-    for n in range(vec_size):
-        for b in range(batch_size):
-            x = np.random.randn(2 ** b, 2 ** n).astype(np.float32)
-            y = np.random.randn(2 ** b, 2 ** n).astype(np.float32)
-
-            start = time.time()
-            for _ in range(reps):
-                _ = cpu(x, y)
-            times[n, b, 0] = time.time() - start
-
-            start = time.time()
-            ff.GPU_activations = [gpuarray.to_gpu(x)]
-            for _ in range(reps):
-                _ = gpu([0], y)
-            times[n, b, 1] = time.time() - start
-
-            print "n", n, "b", b, "times", times[n, b]
-
-    print times
-    print times[..., 1] < times[..., 0]
+import hessianfree as hf
 
 
 def threshold_calc_G():
-    vec_size = 11
-    batch_size = 11
+    """Profile GPU vs CPU performance (can use this to determine at what point
+    it is useful to run things on the GPU)."""
+
+    batch_size = range(128, 1024, 128)
+    layer_size = range(128, 1024, 128)
     reps = 100
 
-    times = np.zeros((vec_size, batch_size, 3))
-    for n in range(vec_size):
-        for b in range(batch_size):
-            inputs = np.random.randn(2 ** b, 1).astype(np.float32)
-            targets = np.random.randn(2 ** b, 1).astype(np.float32)
+    times = np.zeros((len(batch_size), len(layer_size), 2))
+    for i, b in enumerate(batch_size):
+        inputs = np.random.randn(b, 1).astype(np.float32)
+        targets = np.random.randn(b, 1).astype(np.float32)
 
-            ff = FFNet([1, 2 ** n, 2 ** n, 1], use_GPU=False)
+        for j, n in enumerate(layer_size):
+            ff = hf.FFNet([1, n, n, 1], use_GPU=False)
             ff.cache_minibatch(inputs, targets)
 
             v = np.random.randn(ff.W.size).astype(np.float32)
@@ -70,24 +34,53 @@ def threshold_calc_G():
             start = time.time()
             for _ in range(reps):
                 ff.calc_G(v)
-            times[n, b, 0] = time.time() - start
+            times[i, j, 0] = time.time() - start
 
-            ff = FFNet([1, 2 ** n, 2 ** n, 1], use_GPU=True)
+            ff = hf.FFNet([1, n, n, 1], use_GPU=True)
             ff.cache_minibatch(inputs, targets)
 
             start = time.time()
             for _ in range(reps):
-                ff.calc_G(v)
-            times[n, b, 1] = time.time() - start
-
-            start = time.time()
-            for _ in range(reps):
                 ff.GPU_calc_G(v)
-            times[n, b, 2] = time.time() - start
+            times[i, j, 1] = time.time() - start
 
-            print "n", n, "b", b, "times", times[n, b]
+            print "b", b, "n", n, "times", times[i, j]
 
-    print times
+    print times[..., 1] - times[..., 0]
+    print times[..., 1] < times[..., 0]
+
+
+def threshold_m_dot():
+    """Profile CPU vs GPU performance."""
+
+    vec_size = range(128, 1024, 128)
+    reps = 100
+    times = np.zeros((len(vec_size), len(vec_size), len(vec_size), 2))
+    for i, a0 in enumerate(vec_size):
+        for j, a1 in enumerate(vec_size):
+            a = np.random.randn(a0, a1).astype(np.float32)
+            for k, b1 in enumerate(vec_size):
+                b = np.random.randn(a1, b1).astype(np.float32)
+                out = np.zeros((a0, b1), dtype=np.float32)
+
+                start = time.time()
+                for _ in range(reps):
+                    np.dot(a, b, out=out)
+                times[i, j, k, 0] = time.time() - start
+
+                start = time.time()
+                a_gpu = gpuarray.to_gpu(a)
+                b_gpu = gpuarray.to_gpu(b)
+                out_gpu = gpuarray.to_gpu(out)
+
+                for _ in range(reps):
+                    hf.gpu.m_dot(a_gpu, b_gpu, out=out_gpu)
+                out_gpu.get(out)
+                times[i, j, k, 1] = time.time() - start
+
+                print "a0", a0, "a1", a1, "b1", b1, "times", times[i, j, k]
+
+    print times[..., 1] - times[..., 0]
     print times[..., 1] < times[..., 0]
 
 
@@ -96,7 +89,7 @@ def profile_calc_G(cprofile=True):
     targets = np.random.randn(1024, 1).astype(np.float32)
     N = 1024
 
-    ff = FFNet([1, N, N, 1], use_GPU=True)
+    ff = hf.FFNet([1, N, N, 1], use_GPU=True)
     ff.cache_minibatch(inputs, targets)
 
     v = np.random.randn(ff.W.size).astype(np.float32)
@@ -114,14 +107,7 @@ def profile_calc_G(cprofile=True):
         pycuda.driver.start_profiler()
 
     for _ in range(100):
-        _ = ff.calc_G(v)
-
-#     for i in range(100):
-#         Gv = gpuarray.to_gpu(tmp3)
-#         for _ in range(10):
-#             tmp = ff.m_dot(tmp4, tmp4)
-#         Gv[:N * N] = tmp.ravel()
-#         a = Gv.get()
+        _ = ff.GPU_calc_G(v)
 
     if cprofile:
         p.disable()
@@ -147,9 +133,8 @@ def profile_m_dot(cprofile=True):
 
     for _ in range(2):
         # run it a few times to get rid of any startup overhead
-        m_dot(a_gpu, b_gpu, out=c_gpu)
-        simple_m_dot(a_gpu, b_gpu, out=c_gpu)
-        outer_sum(a_gpu, b_gpu, out=c_gpu)
+        hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu)
+        hf.gpu.simple_m_dot(a_gpu, b_gpu, out=c_gpu)
 
     if cprofile:
         start = time.time()
@@ -163,8 +148,8 @@ def profile_m_dot(cprofile=True):
     for _ in range(100):
 #        np.dot(a, b, out=c)
 #        simple_m_dot(a_gpu, b_gpu, out=c_gpu)
-        m_dot(a_gpu, b_gpu, out=c_gpu, transpose_a=True, transpose_b=True)
-#        outer_sum(a_gpu, b_gpu, out=c_gpu)
+        hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu, transpose_a=True,
+                     transpose_b=True)
     c_gpu.get()
 
     if cprofile:

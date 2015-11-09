@@ -50,6 +50,11 @@ class HessianFree(Optimizer):
         self.plots = defaultdict(list)
 
     def compute_update(self, printing=False):
+        if self.net.use_GPU:
+            self.calc_G = self.net.GPU_calc_G
+        else:
+            self.calc_G = self.net.calc_G
+
         err = self.net.error()  # note: don't reuse previous error (diff batch)
 
         # compute gradient
@@ -150,7 +155,7 @@ class HessianFree(Optimizer):
         base_grad = -grad  # note negative
         delta = init_delta
         residual = base_grad
-        residual -= self.net.calc_G(init_delta, damping=self.damping)
+        residual -= self.calc_G(init_delta, damping=self.damping)
         res_norm = np.dot(residual, residual)
         direction = residual.copy()
 
@@ -164,10 +169,7 @@ class HessianFree(Optimizer):
                 print "delta norm", np.linalg.norm(delta)
                 print "direction norm", np.linalg.norm(direction)
 
-            if self.net.use_GPU:
-                G_dir = self.net.GPU_calc_G(direction, damping=self.damping)
-            else:
-                G_dir = self.net.calc_G(direction, damping=self.damping)
+            G_dir = self.calc_G(direction, damping=self.damping)
 
             # calculate step size
             step = res_norm / np.dot(direction, G_dir)

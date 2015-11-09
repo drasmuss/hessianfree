@@ -4,9 +4,9 @@ import pycuda.autoinit
 from pycuda.autoinit import device
 from pycuda.compiler import SourceModule
 
-
-import kernel_wrappers
-from kernel_wrappers import m_dot, simple_m_dot, outer_sum, sum_axis
+from hessianfree.gpu import kernel_wrappers
+from hessianfree.gpu.kernel_wrappers import (m_dot, simple_m_dot, sum_axis,
+                                             iadd)
 
 
 def parse_kernels():
@@ -41,7 +41,7 @@ def parse_kernels():
 pycuda.autoinit.context.set_shared_config(
     pycuda.driver.shared_config.FOUR_BYTE_BANK_SIZE)
 
-mod = SourceModule(parse_kernels())
+kernels = SourceModule(parse_kernels())
 
-m_dot_kernel = [[mod.get_function("shared_m_dot_%s_%s" % (a, b))
+m_dot_kernel = [[kernels.get_function("shared_m_dot_%s_%s" % (a, b))
                  for b in ["0", "1"]] for a in ["0", "1"]]
