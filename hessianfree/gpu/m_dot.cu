@@ -1,5 +1,6 @@
 __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
-        float *A, float *B, float *C, int a0, int a1, int b1, int increment)
+        float *A, float *B, float *C, const int a0, const int a1, const int b1, 
+        const int increment)
 {
     // multiplying an [a0,a1] matrix by an [a1,b1] matrix. each thread will
     // compute one element of c, which is a[i,:] * b[:,j].  however, we can
@@ -191,3 +192,55 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
             C[C_off] = c;
     }
 }
+
+/*
+__global__ void mv_dot(float *A, float *v, float *out, int transpose_a,
+                       int a0, int a1)
+{
+    // matrix-vector multiplication with broadcasting along given axis
+    
+    #define tile_len %tile_len%
+    
+    const int t_i = threadIdx.y;
+    const int t_j = threadidx.x;
+    const int row = blockDim.y*blockIdx.y + t_i;
+    const int col = blockDim.x*blockIdx.x + t_j;
+    
+    # note: no need for extra column because warps will never be accessing
+    # across multiple rows
+    __shared__ float v_share[1024];
+    __shared__ float prod_share[1024];
+    
+    if (row < a0 && col < a1)
+    {
+        // load the appropriate part of v for this block into shared memory
+        if (transpose_a && threadIdx.x == 0)
+            v_share[threadIdx.y] = v[row];
+        else if (!transpose_a && threadIdx.y == 0)
+            v_share[threadIdx.x] = v[col];
+        
+        __syncthreads();
+        
+        // multiply A*v
+        // TODO: is it faster to have each thread just do one multiply like this,
+        // or to have each one do a couple?
+        if (transpose_a)
+            out_share[t_i*tile_len + t_j] = A[row*a1 + col] * v_share[t_i];
+        else
+            out_share[t_i*tile_len + t_j] = A[row*a1 + col] * v_share[t_j];
+    }
+    
+    __syncthreads();
+        
+    // sum along appropriate axis of the tile
+    // note: we're not going to bother doing a fancy reduction here,
+    // because we're assuming that tile_len <= 32 (but we could do a
+    // reduction if we really want to optimize this)
+    
+    if (t_i > 0 || (transpose_a && col >= a1) ||
+        (!transpose_a && blockIdx.y*blockDim.y* + t_j >= a0))
+        return;
+
+    
+}
+*/

@@ -2,13 +2,10 @@ import hessianfree as hf
 import numpy as np
 import pytest
 
-try:
-    import pycuda
+from hessianfree.tests import pycuda_installed
+if pycuda_installed:
     from hessianfree.gpu import m_dot
     from pycuda import gpuarray
-    pycuda_installed = True
-except ImportError:
-    pycuda_installed = False
 
 pytestmark = pytest.mark.skipif(not pycuda_installed,
                                 reason="PyCUDA not installed")
@@ -66,6 +63,51 @@ def test_ffnet():
     outputs = ff.forward(inputs, ff.W)
 
     assert ff.loss.batch_loss(outputs, targets) < 1e-5
+
+
+def test_J_dot():
+    N = 100
+    b = 1000
+    a = np.random.randn(b, N, N).astype(np.float32)
+    b = np.random.randn(b, N).astype(np.float32)
+    a_gpu = gpuarray.to_gpu(a)
+    b_gpu = gpuarray.to_gpu(b)
+
+    out_gpu = hf.gpu.J_dot(a_gpu, b_gpu).get()
+    out_cpu = np.einsum("ijk,ik->ij", a, b)
+
+    assert np.allclose(out_gpu, out_cpu, atol=1e-5)
+
+    out_gpu = hf.gpu.J_dot(a_gpu, b_gpu, transpose_a=True).get()
+    out_cpu = np.einsum("ijk,ik->ij", a.transpose((0, 2, 1)), b)
+
+    assert np.allclose(out_gpu, out_cpu, atol=1e-5)
+
+    out_gpu = hf.gpu.J_dot(a_gpu, b_gpu, out=b_gpu).get()
+    out_cpu = np.einsum("ijk,ik->ij", a, b)
+
+    assert np.allclose(out_gpu, out_cpu, atol=1e-5)
+
+
+# def test_rnnet():
+#     n_inputs = 5
+#     sig_len = 10
+#
+#     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
+#                       np.ones(sig_len))[:, :, None]
+#     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
+#                        np.linspace(0, 1, sig_len))[:, :, None]
+#     inputs = inputs.astype(np.float32)
+#     targets = targets.astype(np.float32)
+#
+#     rnn = hf.RNNet(shape=[1, 10, 1], use_GPU=True, debug=True)
+#
+#     rnn.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=100),
+#                     max_epochs=30)
+#
+#     outputs = rnn.forward(inputs, rnn.W)
+#
+#     assert rnn.loss.batch_loss(outputs, targets) < 1e-4
 
 
 if __name__ == "__main__":

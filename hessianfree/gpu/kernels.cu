@@ -1,28 +1,8 @@
 #include <stdio.h>
 
-__global__ void outer_sum(float *a, float *b, float *out,
-                          int batch_size)
-{
-    int a_i = blockIdx.x*blockDim.x + threadIdx.x;
-    int b_i = blockIdx.y*blockDim.y + threadIdx.y;
-    const int a_len = blockDim.x * gridDim.x;
-    const int b_len = blockDim.y * gridDim.y;
-    const int out_addr = a_i*b_len + b_i;
-    
-    out[out_addr] = 0;
-    for (int j = 0; j < batch_size; j++) 
-    {
-        out[out_addr] += a[a_i] * b[b_i];
-        a_i += a_len;
-        b_i += b_len;
-	}
-
-	// TODO: convert this to a tiled approach like m_dot
-}
-
 
 __global__ void simple_m_dot(float *A, float *B, float *C, int a1,
-	int transpose_b, int increment)
+	                         int transpose_b, int increment)
 {
 	// matrix multiplication without any of the shared memory tiling
 
@@ -68,8 +48,12 @@ __global__ void simple_m_dot(float *A, float *B, float *C, int a1,
 	C[C_off] = c;
 }
 
-__global__ void sum_axis(float *A, float *out, int axis, int a0, int a1)
+__global__ void sum_axis(float *A, float *out, const int axis, const int a0, 
+                         const int a1, const int increment)
 {
+    // sum matrix A over the specified axis
+    // TODO: replace this with a reduction kernel
+    
 	int a_i = blockDim.x*blockIdx.x + threadIdx.x;
 	int start = 0;
 	int stop = 0;
@@ -94,20 +78,35 @@ __global__ void sum_axis(float *A, float *out, int axis, int a0, int a1)
 	float sum = 0;
 	for (int i = start; i < stop; i += step)
 		sum += A[i];
-	out[a_i] = sum;
+	
+	if (increment)
+	   out[a_i] += sum;
+	else
+	   out[a_i] = sum;
 }
 
-__global__ void iadd(float *A, float *B, int a0, int a1)
+__global__ void iadd(float *A, float *v, const int a0, const int a1)
 {
-    const int a_i = blockDim.x*blockIdx.x + threadIdx.x;
+    // in-place addition with broadcasting along first axis
+    // (adding vector v to matrix A)
     
-    if (a_i >= a1)
+    const int row = blockDim.y*blockIdx.y + threadIdx.y;
+    const int col = blockDim.x*blockIdx.x + threadIdx.x;
+    
+    if (row >= a0 || col >= a1)
         return;
     
-    const int max = a0*a1;
-    const float b_val = B[a_i];
+    // load the appropriate part of v for this block into shared memory
+    // TODO: check if this shared memory is faster than just L1 caching   
+    __shared__ float v_share[32];
+        
+    if (threadIdx.y == 0)
+        v_share[threadIdx.x] = v[col];
     
-    for (int i=a_i; i < max; i+=a1)
-        A[i] += b_val;
+    __syncthreads();
+    
+    // add v to A
+    A[row*a1 + col] += v_share[threadIdx.x];
     
 }
+

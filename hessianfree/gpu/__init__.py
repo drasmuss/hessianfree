@@ -6,7 +6,7 @@ from pycuda.compiler import SourceModule
 
 from hessianfree.gpu import kernel_wrappers
 from hessianfree.gpu.kernel_wrappers import (m_dot, simple_m_dot, sum_axis,
-                                             iadd)
+                                             iadd, J_dot)
 
 
 def parse_kernels():

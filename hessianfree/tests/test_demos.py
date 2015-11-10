@@ -2,13 +2,8 @@ import os
 
 import pytest
 
+from hessianfree.tests import pycuda_installed
 from hessianfree import demos
-
-try:
-    import pycuda
-    pycuda_installed = True
-except ImportError:
-    pycuda_installed = False
 
 
 def test_standard():
@@ -28,15 +23,18 @@ def test_mnist():
                 run_args={"batch_size": 100, "max_epochs": 5})
 
 
-@pytest.mark.skipif(not os.path.isfile("mnist.pkl") or not pycuda_installed,
+@pytest.mark.skipif(not os.path.isfile("mnist.pkl") or
+                    not pycuda_installed,
                     reason="No MNIST dataset or PyCUDA")
 def test_mnist_GPU():
     demos.mnist(model_args={"use_GPU": True},
                 run_args={"batch_size": 100, "max_epochs": 5})
 
-# def test_utils():
-#     demos.profile("integrator")
-#     demos.profile_GPU()
+
+def test_profile():
+    demos.profile("integrator", max_epochs=2)
+    demos.profile("mnist", max_epochs=2)
+
 
 if __name__ == "__main__":
     pytest.main("-x -v --tb=native test_demos.py")

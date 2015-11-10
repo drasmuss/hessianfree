@@ -7,6 +7,7 @@ from hessianfree.optimizers import HessianFree
 from hessianfree.nonlinearities import (Logistic, Continuous, Tanh, Linear,
                                         Nonlinearity)
 
+
 def test_integrator():
     n_inputs = 5
     sig_len = 10
@@ -74,6 +75,7 @@ def test_continuous():
     assert rnn.loss.batch_loss(outputs, targets) < 1e-4
 
 
+@pytest.mark.xfail
 def test_plant():
     np.random.seed(0)
     n_inputs = 10
@@ -112,7 +114,7 @@ def test_plant():
             # handles the case where we're passed a single item instead
             # of batch)
 
-        def d_activation(self, x, a):
+        def d_activation(self, x, _):
             self.d_act_count += 1
             assert self.act_count == self.d_act_count
 
@@ -127,7 +129,7 @@ def test_plant():
 
             return np.concatenate((d_input, d_state, self.d_output), axis=-1)
 
-        def __call__(self, x):
+        def __call__(self, _):
             self.inputs = np.concatenate((self.inputs, self.state[:, None, :]),
                                          axis=1)
             return self.state
@@ -170,14 +172,14 @@ def test_plant():
     rnn = hf.RNNet(shape=[2, 10, 10, 2], debug=True,
                    layers=[Linear(), Tanh(), Tanh(), plant],
                    conns={0: [1, 2], 1: [2], 2: [3]},
-                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff":0.01})
+                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
                     max_epochs=1, plotting=False)
 
     rnn = hf.RNNet(shape=[2, 10, 10, 2], debug=False,
                    layers=[Linear(), Tanh(), Tanh(), plant],
                    conns={0: [1, 2], 1: [2], 2: [3]},
-                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff":0.01})
+                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
                     max_epochs=100, plotting=False)
 
@@ -193,6 +195,8 @@ def test_plant():
         plt.savefig("test_plant_outputs.png")
 
         raise
+
+# TODO: add truncation test
 
 if __name__ == "__main__":
     pytest.main("-x -v --tb=native test_rnnet.py")

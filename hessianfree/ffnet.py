@@ -289,25 +289,24 @@ class FFNet(object):
             inputs.shape[0] = batch_size
             self.activations, self.d_activations = self.forward(inputs, self.W,
                                                                 deriv=True)
-            self.inputs = inputs.get_inputs().astype(np.float32)
-            self.targets = inputs.get_targets().astype(np.float32)
+            self.inputs = np.asarray(inputs.get_inputs(), dtype=np.float32)
+            self.targets = np.asarray(inputs.get_targets(), dtype=np.float32)
 
         if self.use_GPU:
             from pycuda import gpuarray
-            # TODO: only add the cast to np.float32 if debug==True
-            self.GPU_activations = [gpuarray.to_gpu(a.astype(np.float32))
-                                    for a in self.activations]
-            self.GPU_d_activations = [gpuarray.to_gpu(a.astype(np.float32))
-                                      for a in self.d_activations]
-            self.GPU_W = gpuarray.to_gpu(self.W.astype(np.float32))
-            self.GPU_d2_loss = [gpuarray.to_gpu(a.astype(np.float32))
-                                if a is not None else None
-                                for a in self.loss.d2_loss(self.activations,
-                                                           self.targets)]
-            self.GPU_tmp_space = [gpuarray.zeros(a.shape, np.float32)
+            self.GPU_activations = [
+                gpuarray.to_gpu(np.asarray(a, dtype=np.float32))
+                for a in self.activations]
+            self.GPU_d_activations = [
+                gpuarray.to_gpu(np.asarray(a, dtype=np.float32))
+                for a in self.d_activations]
+            self.GPU_W = gpuarray.to_gpu(np.asarray(self.W, dtype=np.float32))
+            self.GPU_d2_loss = [
+                gpuarray.to_gpu(np.asarray(a, dtype=np.float32))
+                if a is not None else None
+                for a in self.loss.d2_loss(self.activations, self.targets)]
+            self.GPU_tmp_space = [gpuarray.empty(a.shape, np.float32)
                                   for a in self.activations]
-        else:
-            self.GPU_activations = None
 
     def forward(self, input, params, deriv=False):
         """Compute feedforward activations for given input and parameters.
@@ -517,7 +516,7 @@ class FFNet(object):
                 np.sum(R_deltas[post], axis=0, out=b_g)
 
             self.J_dot(self.d_activations[i], R_error[i],
-                       out=R_deltas[i])
+                       out=R_deltas[i], transpose=True)
 
         Gv /= len(self.inputs)
 
@@ -529,7 +528,7 @@ class FFNet(object):
         from pycuda import gpuarray
 
         Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
-        GPU_v = gpuarray.to_gpu(v.astype(np.float32))
+        GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
 
         # TODO: there are a bunch of memory optimizations here that we could
         # probably port to the standard calc_G
@@ -555,10 +554,9 @@ class FFNet(object):
                 hf.gpu.m_dot(R_activations[pre], Ww,
                              out=R_input[i], increment=True)
 
-#             self.J_dot(self.d_activations[i], R_input,
-#                        out=R_activations[i])
-            # TODO: implement this for non-diagonal d_activations
-            R_activations[i] *= self.GPU_d_activations[i]
+            hf.gpu.J_dot(self.GPU_d_activations[i], R_input[i],
+                         out=R_activations[i])
+#             R_activations[i] *= self.GPU_d_activations[i]
 
         # backward pass
         R_error = R_activations
@@ -583,9 +581,9 @@ class FFNet(object):
 
                 hf.gpu.sum_axis(R_deltas[post], 0, out=Gv[W_end:b_end])
 
-#             self.J_dot(self.d_activations[i], R_error[i],
-#                        out=R_deltas[i])
-            R_deltas[i] *= self.GPU_d_activations[i]
+            hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
+                         out=R_deltas[i], transpose_a=True)
+#             R_deltas[i] *= self.GPU_d_activations[i]
 
         Gv /= len(self.inputs)
 
@@ -649,7 +647,8 @@ class FFNet(object):
             print calc_G - Gv
             print "calc_G / finite G"
             print calc_G / Gv
-            raw_input("Paused (press enter to continue)")
+            raise
+#             raw_input("Paused (press enter to continue)")
 
     def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
         """Weight initialization, given shapes of weight matrices.

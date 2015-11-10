@@ -1,7 +1,7 @@
 import copy
 
 import numpy as np
-from pycuda import gpuarray
+from pycuda import gpuarray, driver
 from pycuda.autoinit import device, context
 
 import hessianfree as hf
@@ -102,6 +102,7 @@ def cpu_m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
 @debug_wrapper(cpu_m_dot, debug=False)
 def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
           increment=False):
+
     a_shape = (np.int32(a.shape[0]), np.int32(a.shape[1]))
     b_shape = (np.int32(b.shape[0]), np.int32(b.shape[1]))
     if transpose_a:
@@ -143,6 +144,73 @@ def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     return out
 
 
+def J_dot(a, b, out=None, transpose_a=False):
+    if a.ndim == 2:
+        # element-wise case
+        if out is None:
+            return a * b
+        elif out is b:
+            out *= a
+            return out
+        else:
+            out[...] = b
+            out *= a
+            return out
+
+    # note: this is basically m_dot, except we know that b is a vector
+    # (which we'll just treat as an nx1 matrix), and we use asynchronous
+    # streams to compute the different batches
+    # TODO: implement a dedicated J_dot, would be more efficient (but only
+    # for non-diagonal J, so not a high priority)
+
+    # note: this is not totally thread safe if out=b. we could have problems if
+    # one block finishes and writes to out before another block has loaded that
+    # part of b into shared memory. however, in practice it seems that blocks
+    # never get that out of sync.
+
+    # we're going to swap a and b because m_dot is designed to align warps
+    # along b1, but here b1 is always 1, which will
+    # not be efficient.  so instead of computing C = A*B we'll compute
+    # C=(B^T*A^T)^T.
+    tmp = a
+    a = b
+    b = tmp
+    transpose_b = not transpose_a
+    transpose_a = False
+
+    n_batches = a.shape[0]
+    a_shape = (np.int32(1), np.int32(a.shape[1]))
+    b_shape = (np.int32(b.shape[1]), np.int32(b.shape[2]))
+    if transpose_b:
+        b_shape = (b_shape[1], b_shape[0])
+
+    assert a_shape[1] == b_shape[0]
+
+    if out is None:
+        out = gpuarray.zeros((n_batches, b_shape[1]), dtype=np.float32)
+
+    assert type(a) == type(b) == type(out) == gpuarray.GPUArray
+
+    block_x = block_y = np.int32(32)
+    grid = (b_shape[1] / block_y + (b_shape[1] % block_y != 0), 1)
+    # TODO: parallelize things across the grid rather than across streams?
+
+    context.synchronize()  # TODO: why does this speed things up?
+    for i in range(n_batches):
+        hf.gpu.m_dot_kernel[transpose_a][transpose_b](
+            a[i], b[i], out[i], a_shape[0], a_shape[1], b_shape[1],
+            np.int32(False), stream=driver.Stream(),
+            grid=grid, block=(block_y, block_x, 1))
+
+    # this synchronize is only really necessary if J_dot were being executed
+    # asynchronously itself, which is never the case in the current
+    # implementation. but there's going to be an implicit synchronize anyway
+    # since it's running in the default stream, so doesn't hurt
+    context.synchronize()
+
+    return out
+
+
 @debug_wrapper(cpu_m_dot, debug=False)
 def simple_m_dot(a, b, out=None, transpose_b=False, increment=False):
     a_shape = (np.int32(a.shape[0]), np.int32(a.shape[1]))
@@ -151,7 +219,6 @@ def simple_m_dot(a, b, out=None, transpose_b=False, increment=False):
         b_shape = (b_shape[1], b_shape[0])
 
     assert a_shape[1] == b_shape[0]
-    assert not increment or out is not None
 
     if out is None:
         out = gpuarray.zeros((a_shape[0], b_shape[1]), dtype=np.float32)
@@ -179,7 +246,7 @@ def simple_m_dot(a, b, out=None, transpose_b=False, increment=False):
 
 
 @debug_wrapper(lambda a, axis, **_: np.sum(a, axis=axis), False)
-def sum_axis(a, axis, out=None):
+def sum_axis(a, axis, out=None, increment=False):
     a_shape = (np.int32(a.shape[0]), np.int32(a.shape[1]))
 
     if out is None:
@@ -191,6 +258,7 @@ def sum_axis(a, axis, out=None):
 
     gpu_sum_axis = hf.gpu.kernels.get_function("sum_axis")
     gpu_sum_axis(a, out, np.int32(axis), a_shape[0], a_shape[1],
+                 np.int32(increment),
                  grid=(a_shape[1 - axis] / block_len +
                        (a_shape[1 - axis] % block_len != 0), 1),
                  block=(block_len, 1, 1))
@@ -200,11 +268,13 @@ def sum_axis(a, axis, out=None):
 
 @debug_wrapper(lambda a, b: a + b, False)
 def iadd(a, b):
-    block_len = np.int32(min(32, a.shape[1]))
+    block_x = np.int32(min(32, a.shape[1]))
+    block_y = np.int32(min(32, a.shape[0]))
+    grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
+            a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 
     gpu_add = hf.gpu.kernels.get_function("iadd")
     gpu_add(a, b, np.int32(a.shape[0]), np.int32(a.shape[1]),
-            block=(block_len, 1, 1),
-            grid=(a.shape[1] / block_len + (a.shape[1] % block_len != 0), 1))
+            block=(block_x, block_y, 1), grid=grid)
 
     return a

@@ -120,6 +120,43 @@ def profile_calc_G(cprofile=True):
         pycuda.driver.stop_profiler()
 
 
+def profile_rnn_calc_G(cprofile=True):
+    inputs = np.random.randn(1024, 128, 1).astype(np.float32)
+    targets = np.random.randn(1024, 128, 1).astype(np.float32)
+    N = 128
+
+    rnn = hf.RNNet([1, N, 1], use_GPU=True)
+    rnn.optimizer = hf.opt.HessianFree()  # for struc_damping check
+    rnn.cache_minibatch(inputs, targets)
+
+    v = np.random.randn(rnn.W.size).astype(np.float32)
+
+    for _ in range(2):
+        # run it a few times to get rid of any startup overhead
+        rnn.GPU_calc_G(v)
+
+    if cprofile:
+        start = time.time()
+
+        p = Profile()
+        p.enable()
+    else:
+        pycuda.driver.start_profiler()
+
+    for _ in range(20):
+        _ = rnn.GPU_calc_G(v)
+
+    if cprofile:
+        p.disable()
+
+        print "time", time.time() - start
+
+        ps = pstats.Stats(p)
+        ps.strip_dirs().sort_stats('time').print_stats(20)
+    else:
+        pycuda.driver.stop_profiler()
+
+
 def profile_m_dot(cprofile=True):
 #     pycuda.compiler.DEFAULT_NVCC_FLAGS += ["-use_fast_math"]
 
