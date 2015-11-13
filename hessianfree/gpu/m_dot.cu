@@ -20,7 +20,8 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     // efficient way possible).
     
     // side length of square tile
-    #define tile_len %tile_len%
+    // #define tile_len %tile_len%
+    const int tile_len = blockDim.x;
     
     // thread variables
     // note: we use x to index cols and y to index rows because warps will be
@@ -114,8 +115,10 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     // note: we add an extra column (which will just be zero) so that
     // when we are writing data in by column the writes are all offset,
     // reducing bank conflicts
-    __shared__ float A_tile[1056]; //[tile_len][tile_len+1];
-    __shared__ float B_tile[1056]; //[tile_len][tile_len+1];
+    //__shared__ float A_tile[1056]; //[tile_len][tile_len+1];
+    //__shared__ float B_tile[1056]; //[tile_len][tile_len+1];
+    extern __shared__ float A_tile[];
+    float* B_tile = A_tile + (blockDim.x+1)*blockDim.y;
     
     // loop over the tiles
     // tile_i and tile_j point to the top left corner of the A/B tiles
@@ -193,54 +196,266 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     }
 }
 
-/*
-__global__ void mv_dot(float *A, float *v, float *out, int transpose_a,
-                       int a0, int a1)
+
+__global__ void small_m_dot_%transpose_a%_%transpose_b%(
+        float *A, float *B, float *out, int a0, int a1, int b1, int increment)
 {
-    // matrix-vector multiplication with broadcasting along given axis
+    // matrix multiplication for the case when A and B are small, e.g. 1xN
+    // (in this case the normal m_dot can be inefficient because big sections 
+    // of the tile are inactive)
     
-    #define tile_len %tile_len%
+    const int A_size = a0*a1;
+    const int B_size = a1*b1;
+    const int A_grid = blockIdx.x*A_size;
+    
+    // load A and B into shared memory
+    extern __shared__ float A_share[];
+    float* B_share = A_share + A_size;
+    
+    // TODO: get the grid offset to work if A is transposed?
+    
+    /*
+    #if %transpose_a%
+        const int A_row = a0;
+    #else
+        const int A_row = a1;
+    #endif
+    #if %transpose_b%
+        const int B_row = a1;
+    #else
+        const int B_row = b1;
+    #endif
+
+    
+    int t_i = threadIdx.x / A_row;
+    int t_j = threadIdx.x % A_row;
+    
+    if (threadIdx.x < A_size)
+        A_share[t_i*(A_row+1) + t_j] = A[A_grid + threadIdx.x];
+    
+    t_i = threadIdx.x / B_row;
+    t_j = threadIdx.x % B_row;
+        
+    if (threadIdx.x < B_size)
+        B_share[t_i*(B_row+1) + t_j] = B[threadIdx.x];
+    */
+    
+    if (threadIdx.x < A_size)
+        A_share[threadIdx.x] = A[A_grid + threadIdx.x];
+    if (threadIdx.x < B_size)
+        B_share[threadIdx.x] = B[threadIdx.x];
+    
+    
+    __syncthreads();
+    
+    /*
+    if (threadIdx.x == 0)
+    {
+        printf("A\n");
+        for (int i=0; i < a0*a1; i++)
+            printf(" %f", A[i]);
+        printf("\n");
+        printf("A_share\n");
+        for (int i=0; i < a0*a1; i++)
+            printf(" %f", A_share[i]);
+        printf("\n");
+        printf("B\n");
+        for (int i=0; i < a1*b1; i++)
+            printf(" %f", B[i]);
+        printf("\n");
+        printf("B_share\n");
+        for (int i=0; i < a1*b1; i++)
+            printf(" %f", B_share[i]);
+        printf("\n");
+    }
+    */
+    
+    
+    if (threadIdx.x < a0*b1)
+    {   
+        /*
+        t_i = threadIdx.x / b1;
+        t_j = threadIdx.x % b1;
+        #if %transpose_a%
+            int A_off = t_i;
+            const int A_step = a0+1;
+        #else
+            int A_off = t_i*(a1+1);
+            const int A_step = 1;
+        #endif
+        #if %transpose_b%
+            int B_off = t_j*(a1+1);
+            const int B_step = 1;
+        #else
+            int B_off = t_j;
+            const int B_step = b1+1;
+        #endif
+        */
+        
+        const int t_i = threadIdx.x / b1;
+        const int t_j = threadIdx.x % b1;
+        #if %transpose_a%
+            int A_off = t_i;
+            const int A_step = a0;
+        #else
+            int A_off = t_i*a1;
+            const int A_step = 1;
+        #endif
+        #if %transpose_b%
+            int B_off = t_j*a1;
+            const int B_step = 1;
+        #else
+            int B_off = t_j;
+            const int B_step = b1;
+        #endif
+        
+        
+        float c=0;
+        for (int i=0; i < a1; i++)
+        {
+            c += A_share[A_off] * B_share[B_off];
+            A_off += A_step;
+            B_off += B_step;
+        }
+            
+        if (increment)
+            out[blockIdx.x*b1 + threadIdx.x] += c;
+        else
+            out[blockIdx.x*b1 + threadIdx.x] = c;
+    }
+}
+
+
+__global__ void mv_dot_%transpose_a%_%transpose_b%(
+        float *A, float *v, float *out, const int batch_a, const int batch_v, 
+        const int a0, const int a1, const int increment)
+{
+    // matrix-vector product
     
     const int t_i = threadIdx.y;
-    const int t_j = threadidx.x;
-    const int row = blockDim.y*blockIdx.y + t_i;
-    const int col = blockDim.x*blockIdx.x + t_j;
+    const int t_j = threadIdx.x;
+    const int dim_i = blockDim.y;
+    const int dim_j = blockDim.x;
     
-    # note: no need for extra column because warps will never be accessing
-    # across multiple rows
-    __shared__ float v_share[1024];
-    __shared__ float prod_share[1024];
+    // note: right now this code assumes that dim_i == dim_j
+    // note: transpose_b is only used when there are batches, to indicate
+    // which way the batches are aligned
+    // TODO: batch_v will ruin the coalescing, is there any way around that?
     
-    if (row < a0 && col < a1)
+    // batch offset
+    if (batch_a)
     {
-        // load the appropriate part of v for this block into shared memory
-        if (transpose_a && threadIdx.x == 0)
-            v_share[threadIdx.y] = v[row];
-        else if (!transpose_a && threadIdx.y == 0)
-            v_share[threadIdx.x] = v[col];
+        A += blockIdx.y * a0 * a1;
+        out += blockIdx.y * a0;
+    }
+    if (batch_v && %transpose_b%)
+        v += blockIdx.y * a1;
+        
+    
+    __shared__ float data[1056];
+    __shared__ float v_share[32];
+    
+    #if %transpose_a%
+        const int start = dim_j*blockIdx.x;
+        const int step = dim_i;
+        const int offset_step = step*a0;
+        const int limit = a0*a1;
+        const int v_index = t_i;
+        const int data_offset = t_i*(dim_j+1) + t_j;
+        const bool active = dim_j*blockIdx.x + t_j < a0;
+        const int block_offset = t_i*a0 + t_j;
+    #else
+        const int start = dim_i*blockIdx.x*a1;
+        const int step = dim_j;
+        const int offset_step = step;
+        const int limit = start + (t_i+1)*a1;
+        const int v_index = t_j;
+        const int data_offset = t_j*(dim_j+1) + t_i;
+        const bool active = dim_i*blockIdx.x + t_i < a0;
+        const int block_offset = t_i*a1 + t_j;
+    #endif
+    
+    float sum = 0;
+    int block_index = start;
+    for (int i=0; i < a1; i+=step)
+    {
+        if (t_i == 0 && i+t_j < a1)
+        {
+            if (batch_v && !%transpose_b%)
+                v_share[t_j] = v[(i+t_j)*gridDim.y + blockIdx.y];
+            else
+                v_share[t_j] = v[i + t_j];
+        }
         
         __syncthreads();
         
-        // multiply A*v
-        // TODO: is it faster to have each thread just do one multiply like this,
-        // or to have each one do a couple?
-        if (transpose_a)
-            out_share[t_i*tile_len + t_j] = A[row*a1 + col] * v_share[t_i];
-        else
-            out_share[t_i*tile_len + t_j] = A[row*a1 + col] * v_share[t_j];
+        if (active && block_index + block_offset < limit)
+            sum += A[block_index + block_offset] * v_share[v_index];
+        block_index += offset_step;
+    }
+    data[data_offset] = sum;
+    
+    /*
+    if (blockIdx.y == 3 && t_i == 15 && t_j == 0)
+    {
+        printf("v:");
+        for (int i=0; i < 32; i++)
+            printf(" %f", v[i]);
+        printf("\n");
+        
+        printf("v_share:");
+        for (int i=0; i < 32; i++)
+            printf(" %f", v_share[i]);
+        printf("\n");
+        
+        printf("data:");
+        for (int i=0; i < 1024; i++)
+            printf(" %f", data[i]);
+        printf("\n");
+    }
+    */
+    
+    // stage 2: reduction within block
+    // note: we always order things in blocks such that we can do a column-wise
+    // reduction (to keep warps intact)
+    const int out_offset = blockIdx.x*dim_j + t_j;
+    if (out_offset >= a0)
+        return;
+    
+    const int reduction_offset = t_i*(dim_j+1) + t_j;
+    for (int s=dim_i/2; s > 0; s>>=1)
+    {
+        __syncthreads();
+        
+        /*
+        if (t_i == 0 && t_j == 0)
+        {
+            printf("data:");
+            for (int i=0; i < 32; i++)
+                printf(" %f", data[i]);
+            printf("\n");
+        }
+        */
+        
+        if (t_i < s)
+            data[reduction_offset] += data[reduction_offset + s*(dim_j+1)];
     }
     
-    __syncthreads();
-        
-    // sum along appropriate axis of the tile
-    // note: we're not going to bother doing a fancy reduction here,
-    // because we're assuming that tile_len <= 32 (but we could do a
-    // reduction if we really want to optimize this)
-    
-    if (t_i > 0 || (transpose_a && col >= a1) ||
-        (!transpose_a && blockIdx.y*blockDim.y* + t_j >= a0))
+    if (t_i > 0)
         return;
-
-    
+        
+    if (batch_v && !batch_a)
+    {
+        if (increment)
+            out[out_offset*gridDim.y + blockIdx.y] += data[t_j];
+        else
+            out[out_offset*gridDim.y + blockIdx.y] = data[t_j];
+    }
+    else
+    {
+        if (increment)
+            out[out_offset] += data[t_j];
+        else
+            out[out_offset] = data[t_j];
+    }
 }
-*/

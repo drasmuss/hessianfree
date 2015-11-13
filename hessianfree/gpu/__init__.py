@@ -5,8 +5,8 @@ from pycuda.autoinit import device
 from pycuda.compiler import SourceModule
 
 from hessianfree.gpu import kernel_wrappers
-from hessianfree.gpu.kernel_wrappers import (m_dot, simple_m_dot, sum_axis,
-                                             iadd, J_dot)
+from hessianfree.gpu.kernel_wrappers import (m_dot, iadd, J_dot, sum_cols,
+                                             mv_dot)
 
 
 def parse_kernels():
@@ -20,21 +20,25 @@ def parse_kernels():
 
     # create versions of the function with transpose hard-coded, so it can
     # be compiled more efficiently
-    tmp = m_dot.replace("%transpose_a%", "0")
-    tmp = tmp.replace("%transpose_b%", "0")
-    code += tmp
+    funcs = m_dot.split("__global__ void")
+    new_funcs = []
+    for f in funcs:
+        if "%transpose_a%" in f:
+            for t_a in ["0", "1"]:
+                new_funcs += [f.replace("%transpose_a%", t_a)]
+        else:
+            new_funcs += [f]
 
-    tmp = m_dot.replace("%transpose_a%", "1")
-    tmp = tmp.replace("%transpose_b%", "0")
-    code += tmp
+    funcs = new_funcs
+    new_funcs = []
+    for f in funcs:
+        if "%transpose_b%" in f:
+            for t_b in ["0", "1"]:
+                new_funcs += [f.replace("%transpose_b%", t_b)]
+        else:
+            new_funcs += [f]
 
-    tmp = m_dot.replace("%transpose_a%", "0")
-    tmp = tmp.replace("%transpose_b%", "1")
-    code += tmp
-
-    tmp = m_dot.replace("%transpose_a%", "1")
-    tmp = tmp.replace("%transpose_b%", "1")
-    code += tmp
+    code += "__global__ void".join(new_funcs)
 
     return code
 
@@ -45,3 +49,7 @@ kernels = SourceModule(parse_kernels())
 
 m_dot_kernel = [[kernels.get_function("shared_m_dot_%s_%s" % (a, b))
                  for b in ["0", "1"]] for a in ["0", "1"]]
+small_m_dot_kernel = [[kernels.get_function("small_m_dot_%s_%s" % (a, b))
+                       for b in ["0", "1"]] for a in ["0", "1"]]
+mv_dot_kernel = [[kernels.get_function("mv_dot_%s_%s" % (a, b))
+                  for b in ["0", "1"]] for a in ["0", "1"]]

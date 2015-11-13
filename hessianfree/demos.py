@@ -205,7 +205,7 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
     test = (inputs, targets)
 
     if model_args is None:
-        rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
+        rnn = RNNet(shape=[1, 2, 1], struc_damping=None,
                     layers=[Linear(), Logistic(), Logistic()],
                     debug=True, use_GPU=True)
     else:

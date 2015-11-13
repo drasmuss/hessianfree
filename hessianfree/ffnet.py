@@ -549,14 +549,11 @@ class FFNet(object):
                 hf.gpu.m_dot(self.GPU_activations[pre], vw,
                              out=R_input[i], increment=True)
                 hf.gpu.iadd(R_input[i], vb)
-#                 for batch in R_input[i]:
-#                     batch += vb
                 hf.gpu.m_dot(R_activations[pre], Ww,
                              out=R_input[i], increment=True)
 
             hf.gpu.J_dot(self.GPU_d_activations[i], R_input[i],
                          out=R_activations[i])
-#             R_activations[i] *= self.GPU_d_activations[i]
 
         # backward pass
         R_error = R_activations
@@ -573,17 +570,16 @@ class FFNet(object):
                 W, _ = self.get_weights(self.GPU_W, (i, post))
                 offset, W_end, b_end = self.offsets[(i, post)]
 
-                hf.gpu.m_dot(R_deltas[post], W,  # self.GPU_W[offset:W_end],
+                hf.gpu.m_dot(R_deltas[post], W,
                              transpose_b=True, out=R_error[i], increment=True)
 
                 hf.gpu.m_dot(self.GPU_activations[i], R_deltas[post],
                              transpose_a=True, out=Gv[offset:W_end])
 
-                hf.gpu.sum_axis(R_deltas[post], 0, out=Gv[W_end:b_end])
+                hf.gpu.sum_cols(R_deltas[post], out=Gv[W_end:b_end])
 
             hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
-                         out=R_deltas[i], transpose_a=True)
-#             R_deltas[i] *= self.GPU_d_activations[i]
+                         out=R_deltas[i], transpose_J=True)
 
         Gv /= len(self.inputs)
 

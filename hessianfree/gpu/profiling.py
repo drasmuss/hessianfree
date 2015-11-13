@@ -17,7 +17,7 @@ def threshold_calc_G():
     it is useful to run things on the GPU)."""
 
     batch_size = range(128, 1024, 128)
-    layer_size = range(128, 1024, 128)
+    layer_size = [1] + range(128, 1024, 128)
     reps = 100
 
     times = np.zeros((len(batch_size), len(layer_size), 2))
@@ -53,9 +53,10 @@ def threshold_calc_G():
 def threshold_m_dot():
     """Profile CPU vs GPU performance."""
 
-    vec_size = range(128, 1024, 128)
+#     vec_size = range(128, 513, 128)
+    vec_size = 2 ** np.arange(10)
     reps = 100
-    times = np.zeros((len(vec_size), len(vec_size), len(vec_size), 2))
+    times = np.zeros((len(vec_size), len(vec_size), len(vec_size), 3))
     for i, a0 in enumerate(vec_size):
         for j, a1 in enumerate(vec_size):
             a = np.random.randn(a0, a1).astype(np.float32)
@@ -74,14 +75,43 @@ def threshold_m_dot():
                 out_gpu = gpuarray.to_gpu(out)
 
                 for _ in range(reps):
-                    hf.gpu.m_dot(a_gpu, b_gpu, out=out_gpu)
+                    hf.gpu.m_dot(a_gpu, b_gpu, out=out_gpu, shortcut=False)
                 out_gpu.get(out)
                 times[i, j, k, 1] = time.time() - start
 
+                del a_gpu
+                del b_gpu
+                del out_gpu
+                pycuda.autoinit.context.synchronize()
+
+#                 b = np.ascontiguousarray(b.T)
+                start = time.time()
+                a_gpu = gpuarray.to_gpu(a)
+                b_gpu = gpuarray.to_gpu(b)
+                out_gpu = gpuarray.to_gpu(out)
+
+                for _ in range(reps):
+                    hf.gpu.mv_dot(a_gpu, b_gpu, out=out_gpu,
+                                  batch_a=False, batch_v=b1 > 1,
+                                  transpose_v=False)  # b1 > 1)
+                out_gpu.get(out)
+
+                times[i, j, k, 2] = time.time() - start
+
+                del a_gpu
+                del b_gpu
+                del out_gpu
+                pycuda.autoinit.context.synchronize()
+
                 print "a0", a0, "a1", a1, "b1", b1, "times", times[i, j, k]
 
+    print "cpu vs m_dot"
     print times[..., 1] - times[..., 0]
     print times[..., 1] < times[..., 0]
+
+    print "mv_dot vs m_dot"
+    print times[..., 1] - times[..., 2]
+    print times[..., 1] < times[..., 2]
 
 
 def profile_calc_G(cprofile=True):
@@ -171,7 +201,6 @@ def profile_m_dot(cprofile=True):
     for _ in range(2):
         # run it a few times to get rid of any startup overhead
         hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu)
-        hf.gpu.simple_m_dot(a_gpu, b_gpu, out=c_gpu)
 
     if cprofile:
         start = time.time()
@@ -184,9 +213,8 @@ def profile_m_dot(cprofile=True):
 
     for _ in range(100):
 #        np.dot(a, b, out=c)
-#        simple_m_dot(a_gpu, b_gpu, out=c_gpu)
         hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu, transpose_a=True,
-                     transpose_b=True)
+                     transpose_b=True, shortcut=True)
     c_gpu.get()
 
     if cprofile:

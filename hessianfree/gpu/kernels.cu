@@ -1,53 +1,6 @@
 #include <stdio.h>
 
 
-__global__ void simple_m_dot(float *A, float *B, float *C, int a1,
-	                         int transpose_b, int increment)
-{
-	// matrix multiplication without any of the shared memory tiling
-
-	const int b1 = blockDim.y*gridDim.y;
-
-	// row/col for this thread
-	const int a_i = blockIdx.x*blockDim.x + threadIdx.x;
-	const int b_j = blockIdx.y*blockDim.y + threadIdx.y;
-
-	// offsets for each matrix
-	const int A_off = a_i * a1;
-	const int A_end = A_off + a1;
-	int B_off = b_j;
-	int B_step = b1;
-	if (transpose_b)
-	{
-		B_off = b_j * a1;
-		B_step = 1;
-	}
-	const int C_off = a_i*b1 + b_j;
-
-	float c;
-	if (increment)
-		c = C[C_off];
-	else
-		c = 0;
-
-	// accumulate the product for this thread
-	for (int i = A_off, j = B_off; i < A_end; i++, j += B_step)
-		c += A[i] * B[j];
-
-	/*
-	if ((a_i == 0 && b_j == 0) || (a_i == 7499 && b_j == 0) ||
-	(a_i == 0 && b_j == 1023) || (a_i == 7499 && b_j == 1023))
-	{
-	printf("data for %%d %%d\\n", a_i, b_j);
-	printf("a1 %%d b1 %%d\\n", a1, b1);
-	printf("Aoff %%d Aend %%d i %%d\\n", A_off, A_end, i);
-	printf("Boff %%d Bstep %%d j %%d\\n", B_off, B_step, j);
-	}
-	*/
-
-	C[C_off] = c;
-}
-
 __global__ void sum_axis(float *A, float *out, const int axis, const int a0, 
                          const int a1, const int increment)
 {
@@ -84,6 +37,64 @@ __global__ void sum_axis(float *A, float *out, const int axis, const int a0,
 	else
 	   out[a_i] = sum;
 }
+
+
+__global__ void sum_cols(float *A, float *out, const int increment,
+                         const int a0, const int a1)
+{
+    const int t_i = threadIdx.y;
+    const int t_j = threadIdx.x;
+    const int dim_i = blockDim.y;
+    const int dim_j = blockDim.x;
+    const int col = dim_j*blockIdx.x + t_j;
+    const int A_offset = t_i*a1 + col;
+    const int data_offset = t_i*dim_j + t_j;
+    
+    extern __shared__ float data[];
+    
+    // stage 1: loop threads across A to reduce to shared memory block
+    const int step = dim_i*a1;
+    const int limit = a0*a1;
+    float sum = 0;
+    int index = A_offset;
+    for (int i=0; i < limit; i += step)
+    {
+        if (index < limit)
+            sum += A[index];
+        index += step;
+    }
+    data[data_offset] = sum;
+    
+    // stage 2: reduction within block
+    // note: assumes that dim_i is divisible by 2
+    for (int s=dim_i/2; s > 0; s>>=1)
+    {
+        __syncthreads();
+        
+        /*
+        if (t_i == 0 && t_j == 0)
+        {
+            printf("data: ");
+            for (int i=0; i < blockDim.x*blockDim.y; i++)
+                printf("%f ", data[i]);
+            printf("\n");
+        }
+        */
+        
+        if (t_i < s)
+            data[data_offset] += data[data_offset + s*dim_j];
+    }
+    
+    if (t_i == 0)
+    {
+        if (increment)
+            out[col] += data[t_j];
+        else
+            out[col] = data[t_j];
+    }
+    
+} 
+
 
 __global__ void iadd(float *A, float *v, const int a0, const int a1)
 {

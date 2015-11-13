@@ -520,8 +520,7 @@ class RNNet(hf.FFNet):
 
         from pycuda import gpuarray
 
-        # TODO: integrate this with calc_G more nicely, rather than duplicating
-        # so much code
+        # TODO: move this to gpu submodule
 
         Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
         GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
@@ -532,6 +531,10 @@ class RNNet(hf.FFNet):
         # R forward pass
         R_states = self.GPU_states
         R_activations = self.GPU_tmp_space
+        for i in range(self.n_layers):
+            R_activations[i].fill(0)
+            if R_states[i] is not None:
+                R_states[i].fill(0)
 
         v_recs = [self.get_weights(GPU_v, (l, l))
                   for l in range(self.n_layers)]
@@ -540,8 +543,6 @@ class RNNet(hf.FFNet):
 
         for s in range(sig_len):
             for l in range(self.n_layers):
-                R_activations[l][s].fill(0)
-
                 # input from feedforward connections
                 if l > 0:
                     for pre in self.back_conns[l]:
@@ -567,6 +568,8 @@ class RNNet(hf.FFNet):
                                      out=R_activations[l][s], increment=True)
 
                 if not self.layers[l].stateful:
+                    # note: this requires a memory allocation if d_activations
+                    # is non-diagonal
                     hf.gpu.J_dot(self.GPU_d_activations[l][s],
                                  R_activations[l][s],
                                  out=R_activations[l][s])
@@ -576,8 +579,8 @@ class RNNet(hf.FFNet):
                     d_output = self.GPU_d_activations[l][s, ..., 2]
 
                     hf.gpu.J_dot(d_state, R_states[l], out=R_states[l])
-                    R_states[l] += hf.gpu.J_dot(d_input, R_activations[l][s])
-                    # TODO: put an increment option in J_dot
+                    hf.gpu.J_dot(d_input, R_activations[l][s], out=R_states[l],
+                                 increment=True)
                     hf.gpu.J_dot(d_output, R_states[l],
                                  out=R_activations[l][s])
 
@@ -598,9 +601,9 @@ class RNNet(hf.FFNet):
 
         for n in range(trunc_per - 1, sig_len, trunc_per):
             for i in range(self.n_layers):
+                R_deltas[i].fill(0)
                 if R_states[i] is not None:
                     R_states[i].fill(0)
-                R_deltas[i].fill(0)
 
             for s in range(n, np.maximum(n - trunc_len, -1), -1):
                 for l in range(self.n_layers - 1, -1, -1):
@@ -621,7 +624,7 @@ class RNNet(hf.FFNet):
                         hf.gpu.m_dot(self.GPU_activations[l][s],
                                      R_deltas[post], out=W_g, transpose_a=True,
                                      increment=True)
-                        hf.gpu.sum_axis(R_deltas[post], 0, out=b_g,
+                        hf.gpu.sum_cols(R_deltas[post], out=b_g,
                                         increment=True)
 
                     # add recurrent error
@@ -632,18 +635,18 @@ class RNNet(hf.FFNet):
                     # compute deltas
                     if not self.layers[l].stateful:
                         hf.gpu.J_dot(self.GPU_d_activations[l][s], R_error[l],
-                                     out=R_deltas[l], transpose_a=True)
+                                     out=R_deltas[l], transpose_J=True)
                     else:
                         d_input = self.GPU_d_activations[l][s, ..., 0]
                         d_state = self.GPU_d_activations[l][s, ..., 1]
                         d_output = self.GPU_d_activations[l][s, ..., 2]
 
-                        R_states[l] += hf.gpu.J_dot(d_output, R_error[l],
-                                                    transpose_a=True)
+                        hf.gpu.J_dot(d_output, R_error[l], out=R_states[l],
+                                     increment=True, transpose_J=True)
                         hf.gpu.J_dot(d_input, R_states[l], out=R_deltas[l],
-                                     transpose_a=True)
+                                     transpose_J=True)
                         hf.gpu.J_dot(d_state, R_states[l], out=R_states[l],
-                                     transpose_a=True)
+                                     transpose_J=True)
 
                     # apply structural damping
                     struc_damping = getattr(self.optimizer, "struc_damping",
@@ -663,7 +666,7 @@ class RNNet(hf.FFNet):
                                          R_deltas[l], out=W_g,
                                          transpose_a=True, increment=True)
                         else:
-                            hf.gpu.sum_axis(R_deltas[l], 0, out=b_g,
+                            hf.gpu.sum_cols(R_deltas[l], out=b_g,
                                             increment=True)
 
         Gv /= batch_size
