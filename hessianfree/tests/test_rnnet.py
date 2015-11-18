@@ -3,14 +3,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import hessianfree as hf
-from hessianfree.optimizers import HessianFree
 from hessianfree.nonlinearities import (Logistic, Continuous, Tanh, Linear,
                                         Nonlinearity)
+from hessianfree.optimizers import HessianFree
+from hessianfree.tests import use_GPU
 
 
-def test_integrator():
-    n_inputs = 5
-    sig_len = 10
+pytestmark = pytest.mark.parametrize("use_GPU", use_GPU)
+
+
+def test_integrator(use_GPU):
+    n_inputs = 3
+    sig_len = 5
 
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
@@ -19,7 +23,7 @@ def test_integrator():
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
-    rnn = hf.RNNet(shape=[1, 10, 1], debug=True)
+    rnn = hf.RNNet(shape=[1, 10, 1], debug=True, use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     max_epochs=30)
@@ -29,9 +33,9 @@ def test_integrator():
     assert rnn.loss.batch_loss(outputs, targets) < 1e-4
 
 
-def test_strucdamping():
-    n_inputs = 5
-    sig_len = 10
+def test_strucdamping(use_GPU):
+    n_inputs = 3
+    sig_len = 5
 
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
@@ -41,7 +45,8 @@ def test_strucdamping():
     targets = targets.astype(np.float32)
 
     # TODO: run with debug=True when struc_damping check works
-    rnn = hf.RNNet(shape=[1, 10, 1], debug=False, struc_damping=0.1)
+    rnn = hf.RNNet(shape=[1, 10, 1], debug=False, struc_damping=0.1,
+                   use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     max_epochs=30)
@@ -51,11 +56,11 @@ def test_strucdamping():
     assert rnn.loss.batch_loss(outputs, targets) < 1e-4
 
 
-def test_continuous():
+def test_continuous(use_GPU):
     """Example of a network using the Continuous nonlinearity."""
 
-    n_inputs = 5
-    sig_len = 10
+    n_inputs = 3
+    sig_len = 5
     nl = Continuous(Logistic(), tau=np.random.uniform(1, 3, size=10), dt=0.9)
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
@@ -65,7 +70,7 @@ def test_continuous():
     targets = targets.astype(np.float32)
 
     rnn = hf.RNNet(shape=[1, 10, 1], layers=[Linear(), nl, Logistic()],
-                   debug=True)
+                   debug=True, use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     max_epochs=30)
@@ -76,7 +81,7 @@ def test_continuous():
 
 
 @pytest.mark.xfail
-def test_plant():
+def test_plant(use_GPU):
     np.random.seed(0)
     n_inputs = 10
     sig_len = 20
@@ -169,17 +174,11 @@ def test_plant():
 
     plant = Plant(A, B, targets, init1)
 
-    rnn = hf.RNNet(shape=[2, 10, 10, 2], debug=True,
-                   layers=[Linear(), Tanh(), Tanh(), plant],
-                   conns={0: [1, 2], 1: [2], 2: [3]},
-                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
-    rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=1, plotting=False)
-
     rnn = hf.RNNet(shape=[2, 10, 10, 2], debug=False,
                    layers=[Linear(), Tanh(), Tanh(), plant],
                    conns={0: [1, 2], 1: [2], 2: [3]},
-                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
+                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01},
+                   use_GPU=use_GPU)
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
                     max_epochs=100, plotting=False)
 
@@ -196,7 +195,28 @@ def test_plant():
 
         raise
 
-# TODO: add truncation test
+
+def test_truncation(use_GPU):
+    n_inputs = 3
+    sig_len = 10
+
+    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                      np.ones(sig_len))[:, :, None]
+    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                       np.linspace(0, 1, sig_len))[:, :, None]
+    inputs = inputs.astype(np.float32)
+    targets = targets.astype(np.float32)
+
+    rnn = hf.RNNet(shape=[1, 10, 1], debug=True, use_GPU=use_GPU,
+                   truncation=(5, 5))
+
+    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                    max_epochs=30)
+
+    outputs = rnn.forward(inputs, rnn.W)
+
+    assert rnn.loss.batch_loss(outputs, targets) < 1e-4
+
 
 if __name__ == "__main__":
     pytest.main("-x -v --tb=native test_rnnet.py")

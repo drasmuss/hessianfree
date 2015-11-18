@@ -486,15 +486,25 @@ class RNNet(hf.FFNet):
             for i, a in enumerate(self.GPU_activations):
                 tmp = gpuarray.empty((a.shape[1], a.shape[0], a.shape[2]),
                                      np.float32)
-                tmp2 = gpuarray.empty((a.shape[1], a.shape[0], a.shape[2]),
-                                      np.float32)
-
                 for s in range(a.shape[1]):
                     tmp[s] = a[:, s]
-                    tmp2[s] = self.GPU_d_activations[i][:, s]
 
                 self.GPU_activations[i] = tmp
-                self.GPU_d_activations[i] = tmp2
+
+            for i, a in enumerate(self.GPU_d_activations):
+                if not self.layers[i].stateful:
+                    tmp = gpuarray.empty([a.shape[1], a.shape[0]] +
+                                         list(a.shape[2:]), np.float32)
+                    for s in range(a.shape[1]):
+                        tmp[s] = a[:, s]
+                else:
+                    tmp = gpuarray.empty([a.shape[1], 3, a.shape[0]] +
+                                         list(a.shape[2:-1]), np.float32)
+                    for s in range(a.shape[1]):
+                        for j in range(3):
+                            tmp[s, j] = a[:, s, ..., j]
+
+                self.GPU_d_activations[i] = tmp
 
             # pre-allocate calc_G arrays
             batch_size = self.inputs.shape[0]
@@ -574,9 +584,9 @@ class RNNet(hf.FFNet):
                                  R_activations[l][s],
                                  out=R_activations[l][s])
                 else:
-                    d_input = self.GPU_d_activations[l][s, ..., 0]
-                    d_state = self.GPU_d_activations[l][s, ..., 1]
-                    d_output = self.GPU_d_activations[l][s, ..., 2]
+                    d_input = self.GPU_d_activations[l][s, 0]
+                    d_state = self.GPU_d_activations[l][s, 1]
+                    d_output = self.GPU_d_activations[l][s, 2]
 
                     hf.gpu.J_dot(d_state, R_states[l], out=R_states[l])
                     hf.gpu.J_dot(d_input, R_activations[l][s], out=R_states[l],
@@ -637,9 +647,9 @@ class RNNet(hf.FFNet):
                         hf.gpu.J_dot(self.GPU_d_activations[l][s], R_error[l],
                                      out=R_deltas[l], transpose_J=True)
                     else:
-                        d_input = self.GPU_d_activations[l][s, ..., 0]
-                        d_state = self.GPU_d_activations[l][s, ..., 1]
-                        d_output = self.GPU_d_activations[l][s, ..., 2]
+                        d_input = self.GPU_d_activations[l][s, 0]
+                        d_state = self.GPU_d_activations[l][s, 1]
+                        d_output = self.GPU_d_activations[l][s, 2]
 
                         hf.gpu.J_dot(d_output, R_error[l], out=R_states[l],
                                      increment=True, transpose_J=True)

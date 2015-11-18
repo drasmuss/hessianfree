@@ -22,7 +22,7 @@ def xor():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1], use_GPU=True, debug=True)
+    ff = FFNet([2, 5, 1], use_GPU=False, debug=False)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
@@ -205,9 +205,9 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
     test = (inputs, targets)
 
     if model_args is None:
-        rnn = RNNet(shape=[1, 2, 1], struc_damping=None,
+        rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
                     layers=[Linear(), Logistic(), Logistic()],
-                    debug=True, use_GPU=True)
+                    debug=False, use_GPU=False)
     else:
         rnn = RNNet(**model_args)
 
