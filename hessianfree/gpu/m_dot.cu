@@ -20,7 +20,6 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     // efficient way possible).
     
     // side length of square tile
-    // #define tile_len %tile_len%
     const int tile_len = blockDim.x;
     
     // thread variables
@@ -38,7 +37,7 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     const int a_i = block_i + t_i;
     const int b_j = block_j + t_j;
     
-    // is this thread involved in computing a c[i,j] entry (it can still be
+    // if this thread is involved in computing a c[i,j] entry (it can still be
     // involved in loading data even if this is false)
     const bool active_c = a_i < a0 && b_j < b1;
     
@@ -101,13 +100,17 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     {
         printf("a_i %d, b_j %d \n", a_i, b_j);
         printf("transpose_b %d, increment %d \n", transpose_b, increment);
-        printf("A_block_off %d, A_limit %d, outer_A_step %d \n", A_block_off, A_limit, tile_len);
+        printf("A_block_off %d, A_limit %d, outer_A_step %d \n", A_block_off, 
+               A_limit, tile_len);
         printf("A_off %d \n", A_off);
-        printf("B_block_off %d, B_limit %d, outer_B_step %d \n", B_block_off, B_limit, outer_B_step);
+        printf("B_block_off %d, B_limit %d, outer_B_step %d \n", B_block_off, 
+               B_limit, outer_B_step);
         printf("B_off %d \n", B_off);
         printf("tile_off %d \n", tile_off);
-        printf("inner_A_start %d, inner_A_end %d \n", inner_A_start, inner_A_end);
-        printf("inner_B_start %d, inner_B_step %d \n", inner_B_start, inner_B_step);
+        printf("inner_A_start %d, inner_A_end %d \n", inner_A_start, 
+               inner_A_end);
+        printf("inner_B_start %d, inner_B_step %d \n", inner_B_start, 
+               inner_B_step);
     }
     */
     
@@ -115,10 +118,8 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     // note: we add an extra column (which will just be zero) so that
     // when we are writing data in by column the writes are all offset,
     // reducing bank conflicts
-    //__shared__ float A_tile[1056]; //[tile_len][tile_len+1];
-    //__shared__ float B_tile[1056]; //[tile_len][tile_len+1];
     extern __shared__ float A_tile[];
-    float* B_tile = A_tile + (blockDim.x+1)*blockDim.y;
+    float* B_tile = A_tile + (tile_len+1)*blockDim.y;
     
     // loop over the tiles
     // tile_i and tile_j point to the top left corner of the A/B tiles
@@ -130,6 +131,8 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
         // we need to check whether the location of this thread in the current
         // tile extends past the rows/cols of A and B, for the case when those
         // rows/cols are not evenly divisible by block len
+        // TODO: we could create an "unsafe" version of this kernel that 
+        // assumes everything is evenly divisible by block len
         
         if (active_a && tile + A_axis_off < a1)
             A_tile[tile_off] = A[tile_i];
@@ -164,10 +167,11 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
         // accumulate the product for this thread
         if (active_c)
         {
+            int A_index = inner_A_start;
+            int B_index = inner_B_start;
             for (int i = 0; i < tile_len; i++)
             {
-                c += (A_tile[inner_A_start + i*inner_A_step] * 
-                      B_tile[inner_B_start + i*inner_B_step]);
+                c += A_tile[A_index] * B_tile[B_index];
 
                 /*
                 if (a_i == 1 && b_j == 1)
@@ -176,24 +180,24 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
                     printf("%f * %f, %f \n", A_tile[i], B_tile[j], c);
                 }
                 */
+                
+                A_index += inner_A_step;
+                B_index += inner_B_step;
             }
         }
     
+        tile_i += outer_A_step;
+        tile_j += outer_B_step;
+        
         // wait for all threads to finish their computation before loading
         // the next tile
         __syncthreads();
-        
-        tile_i += outer_A_step;
-        tile_j += outer_B_step;
     }
     
-    if (active_c)
-    {
-        if (increment)
-            C[C_off] += c;
-        else
-            C[C_off] = c;
-    }
+    if (active_c && increment)
+        C[C_off] += c;
+    else if (active_c)
+        C[C_off] = c;
 }
 
 
@@ -328,7 +332,8 @@ __global__ void small_m_dot_%transpose_a%_%transpose_b%(
 
 __global__ void mv_dot_%transpose_a%_%transpose_b%(
         float *A, float *v, float *out, const int batch_a, const int batch_v, 
-        const int a0, const int a1, const int increment)
+        const int a0, const int a1, const int increment, 
+        const int transpose_out)
 {
     // matrix-vector product
     
@@ -344,12 +349,11 @@ __global__ void mv_dot_%transpose_a%_%transpose_b%(
     
     // batch offset
     if (batch_a)
-    {
         A += blockIdx.y * a0 * a1;
-        out += blockIdx.y * a0;
-    }
     if (batch_v && %transpose_b%)
         v += blockIdx.y * a1;
+    if (batch_a != transpose_out)
+        out += blockIdx.y * a0;
         
     
     __shared__ float data[1056];
@@ -376,7 +380,7 @@ __global__ void mv_dot_%transpose_a%_%transpose_b%(
     #endif
     
     float sum = 0;
-    int block_index = start;
+    int block_index = start + block_offset;
     for (int i=0; i < a1; i+=step)
     {
         if (t_i == 0 && i+t_j < a1)
@@ -389,8 +393,8 @@ __global__ void mv_dot_%transpose_a%_%transpose_b%(
         
         __syncthreads();
         
-        if (active && block_index + block_offset < limit)
-            sum += A[block_index + block_offset] * v_share[v_index];
+        if (active && block_index < limit)
+            sum += A[block_index] * v_share[v_index];
         block_index += offset_step;
     }
     data[data_offset] = sum;
@@ -443,8 +447,8 @@ __global__ void mv_dot_%transpose_a%_%transpose_b%(
     
     if (t_i > 0)
         return;
-        
-    if (batch_v && !batch_a)
+
+    if ((batch_v && !batch_a) != transpose_out)
     {
         if (increment)
             out[out_offset*gridDim.y + blockIdx.y] += data[t_j];

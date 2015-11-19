@@ -5,7 +5,7 @@ import pytest
 from hessianfree import FFNet
 from hessianfree.nonlinearities import (Tanh, Softmax, SoftLIF, Linear)
 from hessianfree.optimizers import HessianFree, SGD
-from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL1,
+from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL2,
                                     ClassificationError)
 from hessianfree.tests import use_GPU
 
@@ -19,7 +19,7 @@ def test_xor(use_GPU):
     ff = FFNet([2, 5, 1], debug=True, use_GPU=use_GPU)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
-                   max_epochs=40)
+                   max_epochs=40, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -33,7 +33,7 @@ def test_SGD(use_GPU):
     ff = FFNet([2, 5, 1], debug=False, use_GPU=use_GPU)
 
     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
-                   max_epochs=10000)
+                   max_epochs=10000, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -49,7 +49,7 @@ def test_softlif(use_GPU):
     ff = FFNet([2, 10, 1], layers=lifs, debug=True, use_GPU=use_GPU)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
-                   max_epochs=50)
+                   max_epochs=50, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -65,7 +65,7 @@ def test_crossentropy(use_GPU):
                debug=True, loss_type=CrossEntropy(), use_GPU=use_GPU)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
-                   max_epochs=100)
+                   max_epochs=100, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -82,7 +82,8 @@ def test_testerr(use_GPU):
     err = ClassificationError()
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
-                   max_epochs=100, test_err=err, target_err=-1)
+                   max_epochs=100, test_err=err, target_err=-1,
+                   print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -101,7 +102,7 @@ def test_connections(use_GPU):
                conns={0: [1, 2], 1: [3], 2: [3]}, use_GPU=use_GPU)
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
-                   max_epochs=50)
+                   max_epochs=50, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -113,10 +114,10 @@ def test_sparsity(use_GPU):
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
     ff = FFNet([2, 8, 1], debug=True, use_GPU=use_GPU,
-               loss_type=[SquaredError(), SparseL1(0.01, target=0)])
+               loss_type=[SquaredError(), SparseL2(0.01, target=0)])
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=50),
-                   max_epochs=100)
+                   max_epochs=100, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 

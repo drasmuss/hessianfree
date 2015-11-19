@@ -25,8 +25,8 @@ class LossFunction:
         raise NotImplementedError()
 
     def batch_loss(self, activities, targets):
-        """Utility function to compute a single loss value (taking the mean
-        across batches and summing the loss in each layer)."""
+        """Utility function to compute a single loss value for the network
+        (taking the mean across batches and summing the loss in each layer)."""
 
         losses = self.loss(activities, targets)
         return np.sum([np.true_divide(np.sum(l), l.shape[0]) for l in losses
@@ -51,14 +51,14 @@ class SquaredError(LossFunction):
     @output_loss
     def loss(self, output, targets):
         return np.sum(np.nan_to_num(output - targets) ** 2,
-                       axis=tuple(range(1, output.ndim))) / 2
+                      axis=tuple(range(1, output.ndim))) / 2
 
     @output_loss
     def d_loss(self, output, targets):
         return np.nan_to_num(output - targets)
 
     @output_loss
-    def d2_loss(self, output, targets):
+    def d2_loss(self, output, _):
         return np.ones_like(output)
 
 
@@ -97,6 +97,9 @@ class SparseL1(LossFunction):
             except first/last layers)
         :param target: target activation level for nonlinearities
         """
+
+        # TODO: is it valid to apply L1 sparsity to HF, given that CG is meant
+        # to optimize quadratic loss functions?
 
         self.weight = weight
         self.layers = np.index_exp[1:-1] if layers is None else layers
@@ -152,14 +155,14 @@ class SparseL2(LossFunction):
     def d2_loss(self, activities, _):
         d2_loss = [None for _ in activities]
         for l in np.arange(len(activities))[self.layers]:
-            d2_loss[l] = self.weight
+            d2_loss[l] = np.ones_like(activities[l]) * self.weight
 
         return d2_loss
 
 
 class LossSet(LossFunction):
     """This combines several loss functions into one (e.g. combining
-    SquaredError and SparseL1).  It doesn't need to be created directly, a list
+    SquaredError and SparseL2).  It doesn't need to be created directly, a list
     of loss functions can be passed to FF/RNNet(..., loss_type=[...]) and a
     LossSet will be created automatically."""
 

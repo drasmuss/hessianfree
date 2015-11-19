@@ -49,7 +49,5 @@ kernels = SourceModule(parse_kernels())
 
 m_dot_kernel = [[kernels.get_function("shared_m_dot_%s_%s" % (a, b))
                  for b in ["0", "1"]] for a in ["0", "1"]]
-small_m_dot_kernel = [[kernels.get_function("small_m_dot_%s_%s" % (a, b))
-                       for b in ["0", "1"]] for a in ["0", "1"]]
 mv_dot_kernel = [[kernels.get_function("mv_dot_%s_%s" % (a, b))
                   for b in ["0", "1"]] for a in ["0", "1"]]

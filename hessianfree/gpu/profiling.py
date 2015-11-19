@@ -13,7 +13,7 @@ import hessianfree as hf
 
 
 def threshold_calc_G():
-    """Profile GPU vs CPU performance (can use this to determine at what point
+    """Compare GPU vs CPU performance (can use this to determine at what point
     it is useful to run things on the GPU)."""
 
     batch_size = range(128, 1024, 128)
@@ -51,9 +51,9 @@ def threshold_calc_G():
 
 
 def threshold_m_dot():
-    """Profile CPU vs GPU performance."""
+    """Compare CPU vs m_dot vs mv_dot performance (can use this to set the
+    shortcut thresholds in m_dot)."""
 
-#     vec_size = range(128, 513, 128)
     vec_size = 2 ** np.arange(10)
     reps = 100
     times = np.zeros((len(vec_size), len(vec_size), len(vec_size), 3))
@@ -105,11 +105,11 @@ def threshold_m_dot():
 
                 print "a0", a0, "a1", a1, "b1", b1, "times", times[i, j, k]
 
-    print "cpu vs m_dot"
+    print "m_dot vs cpu"
     print times[..., 1] - times[..., 0]
     print times[..., 1] < times[..., 0]
 
-    print "mv_dot vs m_dot"
+    print "m_dot vs mv_dot"
     print times[..., 1] - times[..., 2]
     print times[..., 1] < times[..., 2]
 
@@ -188,12 +188,9 @@ def profile_rnn_calc_G(cprofile=True):
 
 
 def profile_m_dot(cprofile=True):
-#     pycuda.compiler.DEFAULT_NVCC_FLAGS += ["-use_fast_math"]
-
     N = 1024
     a = np.random.randn(N, N).astype(np.float32)
     b = np.random.randn(N, N).astype(np.float32)
-    c = np.zeros((N, N), dtype=np.float32)
     a_gpu = gpuarray.to_gpu(a)
     b_gpu = gpuarray.to_gpu(b)
     c_gpu = gpuarray.zeros((N, N), np.float32)
@@ -212,7 +209,6 @@ def profile_m_dot(cprofile=True):
         pycuda.driver.start_profiler()
 
     for _ in range(100):
-#        np.dot(a, b, out=c)
         hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu, transpose_a=True,
                      transpose_b=True, shortcut=True)
     c_gpu.get()

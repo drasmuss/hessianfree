@@ -24,6 +24,8 @@ def test_mnist(use_GPU):
     demos.mnist(model_args={"use_GPU": use_GPU},
                 run_args={"batch_size": 100, "max_epochs": 5})
 
+    demos.profile("mnist", max_epochs=2, use_GPU=use_GPU)
+
 
 if __name__ == "__main__":
     pytest.main("-x -v --tb=native test_demos.py")

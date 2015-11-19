@@ -28,6 +28,9 @@ def find_block_len(n_threads, threads_per, vec_len):
 
 
 def debug_wrapper(cpu_func, debug=False):
+    """Decorator used to specify a CPU function used to verify the output of
+    a GPU function."""
+
     def debug_func(gpu_func):
         @wraps(gpu_func)
         def wrapped_func(*args, **kwargs):
@@ -58,17 +61,13 @@ def debug_wrapper(cpu_func, debug=False):
                     print "gpu/cpu"
                     print tmp / out_cpu
                     raise
-
             return out_gpu
-
         return wrapped_func
-
     return debug_func
 
 
 def cpu_m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
               increment=False):
-    # equivalent function implementation on the cpu, for debugging
     result = np.dot(a.T if transpose_a else a, b.T if transpose_b else b)
     if increment:
         return result + out
@@ -97,14 +96,18 @@ def cpu_J_dot(J, v, transpose_J=False, out=None, increment=False):
 
 # @debug_wrapper(cpu_m_dot, debug=True)
 def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
-          increment=False, shortcut=False):
+          increment=False, shortcut=True):
 
     if (shortcut and a.shape[transpose_a] < 512 and
             b.shape[1 - transpose_b] < 16):
-        # TODO: do some transpose thing so we can shortcut small a
         return mv_dot(a, b, out=out, transpose_a=transpose_a,
                       transpose_v=transpose_b, batch_a=False, batch_v=True,
                       increment=increment)
+    elif (shortcut and b.shape[1 - transpose_b] < 512 and
+            a.shape[transpose_a] < 16):
+        return mv_dot(b, a, out=out, transpose_a=not transpose_b,
+                      transpose_v=not transpose_a, batch_a=False, batch_v=True,
+                      increment=increment, transpose_out=True)
 
     a_shape = (np.int32(a.shape[0]), np.int32(a.shape[1]))
     b_shape = (np.int32(b.shape[0]), np.int32(b.shape[1]))
@@ -118,13 +121,13 @@ def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     if out is None:
         out = gpuarray.zeros((a_shape[0], b_shape[1]), dtype=np.float32)
 
+    # note: the block is transposed from what you might think, so it's
+    # (b_shape[1], a_shape[0]), because we want the x threads aligned with
+    # rows to support memory coalescing
     block_x = block_y = np.int32(32)
     grid = (b_shape[1] / block_x + (b_shape[1] % block_x != 0),
             a_shape[0] / block_y + (a_shape[0] % block_y != 0))
 
-    # note: the block is transposed from what you might think, so it's
-    # (b_shape[1], a_shape[0]), because we want the x threads aligned with
-    # rows to support memory coalescing
     hf.gpu.m_dot_kernel[transpose_a][transpose_b](
         a, b, out, a_shape[0], a_shape[1], b_shape[1], np.int32(increment),
         grid=grid, block=(block_x, block_y, 1),
@@ -165,8 +168,6 @@ def sum_cols(a, out=None, increment=False):
     block_x = min(32, a.shape[1])
     block_y = 32
 
-    # TODO: is it faster to make block_y evenly divide a[0]?
-
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
             a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 
@@ -194,7 +195,7 @@ def iadd(a, b):
 
 
 def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
-           batch_a=False, batch_v=False, increment=False):
+           transpose_out=False, batch_a=False, batch_v=False, increment=False):
 
     if batch_a:
         grid_y = a.shape[0]
@@ -203,7 +204,7 @@ def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
     else:
         grid_y = 1
 
-    # transpose_v only applies if there is a degree of freedom there
+    # transpose_v only applies if v is batched
     assert not transpose_v or batch_v
 
     # if a and v are both batched, then the batches must align
@@ -215,7 +216,7 @@ def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
         a_shape = (a_shape[1], a_shape[0])
 
     if out is None:
-        if batch_a:
+        if batch_a != transpose_out:
             out_shape = (grid_y, a_shape[0])
         else:
             out_shape = (a_shape[0], grid_y)
@@ -226,7 +227,7 @@ def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
 
     hf.gpu.mv_dot_kernel[transpose_a][transpose_v](
         a, v, out, np.int32(batch_a), np.int32(batch_v),
-        a_shape[0], a_shape[1], np.int32(increment),
+        a_shape[0], a_shape[1], np.int32(increment), np.int32(transpose_out),
         block=(block_x, block_y, 1), grid=grid)
 
     return out

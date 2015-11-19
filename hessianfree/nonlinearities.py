@@ -26,33 +26,35 @@ class Nonlinearity(object):
 
         pass
 
+# TODO: make in-place nonlinearities if this ever becomes a bottleneck
+
 
 class Logistic(Nonlinearity):
     def __init__(self):
         super(Logistic, self).__init__()
         self.activation = expit
-        self.d_activation = lambda x, a: a * (1 - a)
+        self.d_activation = lambda _, a: a * (1 - a)
 
 
 class Tanh(Nonlinearity):
     def __init__(self):
         super(Tanh, self).__init__()
         self.activation = np.tanh
-        self.d_activation = lambda x, a: 1 - a ** 2
+        self.d_activation = lambda _, a: 1 - a ** 2
 
 
 class Linear(Nonlinearity):
     def __init__(self):
         super(Linear, self).__init__()
         self.activation = lambda x: x
-        self.d_activation = lambda x, a: np.ones_like(x)
+        self.d_activation = lambda x, _: np.ones_like(x)
 
 
 class ReLU(Nonlinearity):
     def __init__(self):
         super(ReLU, self).__init__()
         self.activation = lambda x: np.maximum(0, x)
-        self.d_activation = lambda x, a: a > 0
+        self.d_activation = lambda _, a: a > 0
 
 
 class Gaussian(Nonlinearity):
@@ -78,7 +80,7 @@ class Softmax(Nonlinearity):
 
         return e
 
-    def d_activation(self, x, a):
+    def d_activation(self, _, a):
         return a[..., None, :] * (np.eye(a.shape[-1], dtype=np.float32) -
                                   a[..., None])
 
@@ -120,6 +122,9 @@ class SoftLIF(Nonlinearity):
 
 
 class Continuous(Nonlinearity):
+    """Creates a version of the base nonlinearity that operates in continuous
+    time (filtering inputs with the given tau/dt)."""
+
     def __init__(self, base, tau=1.0, dt=1.0):
         super(Continuous, self).__init__(stateful=True)
         self.base = base

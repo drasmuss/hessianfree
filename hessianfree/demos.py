@@ -193,7 +193,7 @@ def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
 
 def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
                plots=True):
-    """Test for a recurrent network, implementing an integrator."""
+    """Example of a recurrent network, implementing an integrator."""
 
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
@@ -279,9 +279,6 @@ def plant(plots=True):
                           np.einsum("ij,ijk->ik", x, self.B_matrix))
 
             return self.state[:x.shape[0]]
-            # note: generally x will be the same shape as state, this just
-            # handles the case where we're passed a single item instead
-            # of batch)
 
         def d_activation(self, x, _):
             self.d_act_count += 1
@@ -335,12 +332,8 @@ def plant(plots=True):
         return B, d_B
 
     init1 = np.random.uniform(-1, 1, size=(n_inputs, 2))
-#     init2 = np.random.uniform(-1, 1, size=(n_inputs, 2))
 
     plant = Plant(A, B, targets, init1)
-
-    # TODO: why is the test generalization so bad?
-    test = None  # (Plant(A, B, targets, init2), None)
 
     rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
                 layers=[Linear(), Tanh(), Tanh(), plant],
@@ -350,7 +343,7 @@ def plant(plots=True):
 
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,
                                                        init_damping=1),
-                    batch_size=None, test=test, max_epochs=100, plotting=True)
+                    batch_size=None, max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(plant, None, optimizer=SGD(l_rate=0.01),

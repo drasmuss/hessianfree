@@ -22,7 +22,7 @@ class RNNet(hf.FFNet):
         :param struc_damping: controls scale of structural damping (relative
             to Tikhonov damping)
         :param rec_layers: by default, all layers except the first and last
-            are recurrently connected. A list of booleans can be passed here
+            have a recurrent connection. A list of booleans can be passed here
             to override that on a layer-by-layer basis.
         :param W_rec_params: weight initialization parameter dict for recurrent
             weights (passed to init_weights, see parameter descriptions there)
@@ -30,7 +30,7 @@ class RNNet(hf.FFNet):
             will be executed every n timesteps and run backwards for k steps
             (defaults to full backprop if None)
 
-        See FFNet for the rest of the parameters.
+        See FFNet for the remaining parameters.
         """
 
         # define recurrence for each layer (needs to be done before super
@@ -80,8 +80,7 @@ class RNNet(hf.FFNet):
         batch_size = input.shape[0]
         sig_len = input.shape[1]
 
-        activations = [np.zeros((batch_size, sig_len, l),
-                                dtype=self.dtype)
+        activations = [np.zeros((batch_size, sig_len, l), dtype=self.dtype)
                        for l in self.shape]
 
         # temporary space to minimize memory allocations
@@ -207,7 +206,6 @@ class RNNet(hf.FFNet):
                                            out=tmp_act[l])
 
                         # feedforward gradient
-#                         offset, W_end, b_end = self.offsets[(l, post)]
                         W_grad, b_grad = self.get_weights(grad, (l, post))
                         W_tmp_grad, b_tmp_grad = self.get_weights(tmp_grad,
                                                                   (l, post))
@@ -289,7 +287,6 @@ class RNNet(hf.FFNet):
                 init_s = None
 
             for i in range(len(self.W)):
-                inc_W[:] = 0
                 inc_W[i] = eps
 
                 out_inc = self.forward(self.inputs[:, start:n], self.W + inc_W,
@@ -306,6 +303,8 @@ class RNNet(hf.FFNet):
                                                  self.targets[:, start:n])
 
                 grad[i] += (error_inc - error_dec) / (2 * eps)
+
+                inc_W[i] = 0
 
         try:
             assert np.allclose(calc_grad, grad, rtol=1e-3)
@@ -337,9 +336,10 @@ class RNNet(hf.FFNet):
         R_states = [None if not l.stateful else
                     np.zeros((batch_size, self.shape[i]), dtype=self.dtype)
                     for i, l in enumerate(self.layers)]
-        R_activations = [np.zeros_like(a) for a in self.activations]
-        R_inputs = [np.zeros((batch_size, l), dtype=self.dtype)
-                    for l in self.shape]
+        R_activations = self.tmp_space
+        for a in R_activations:
+            a[...] = 0
+
         v_recs = [self.get_weights(v, (l, l))
                   for l in range(self.n_layers)]
         W_recs = [self.get_weights(self.W, (l, l))
@@ -347,33 +347,34 @@ class RNNet(hf.FFNet):
 
         for s in range(sig_len):
             for l in range(self.n_layers):
-                R_inputs[l][:] = 0
-
                 # input from feedforward connections
                 if l > 0:
                     for pre in self.back_conns[l]:
                         vw, vb = self.get_weights(v, (pre, l))
                         Ww, _ = self.get_weights(self.W, (pre, l))
 
-                        R_inputs[l] += np.dot(self.activations[pre][:, s], vw,
-                                              out=tmp_act[l])
-                        R_inputs[l] += vb
-                        R_inputs[l] += np.dot(R_activations[pre][:, s], Ww,
-                                              out=tmp_act[l])
+                        R_activations[l][:, s] += np.dot(
+                            self.activations[pre][:, s], vw, out=tmp_act[l])
+                        R_activations[l][:, s] += vb
+                        R_activations[l][:, s] += np.dot(
+                            R_activations[pre][:, s], Ww, out=tmp_act[l])
 
                 # recurrent input
                 if self.rec_layers[l]:
                     if s == 0:
                         # bias input on first step
-                        R_inputs[l] += v_recs[l][1]
+                        R_activations[l][:, s] += v_recs[l][1]
                     else:
-                        R_inputs[l] += np.dot(self.activations[l][:, s - 1],
-                                              v_recs[l][0], out=tmp_act[l])
-                        R_inputs[l] += np.dot(R_activations[l][:, s - 1],
-                                              W_recs[l][0], out=tmp_act[l])
+                        R_activations[l][:, s] += np.dot(
+                            self.activations[l][:, s - 1], v_recs[l][0],
+                            out=tmp_act[l])
+                        R_activations[l][:, s] += np.dot(
+                            R_activations[l][:, s - 1], W_recs[l][0],
+                            out=tmp_act[l])
 
                 if not self.layers[l].stateful:
-                    self.J_dot(self.d_activations[l][:, s], R_inputs[l],
+                    self.J_dot(self.d_activations[l][:, s],
+                               R_activations[l][:, s],
                                out=R_activations[l][:, s])
                 else:
                     d_input = self.d_activations[l][:, s, ..., 0]
@@ -382,7 +383,7 @@ class RNNet(hf.FFNet):
 
                     R_states[l] = self.J_dot(d_state, R_states[l])
 
-                    R_states[l] += self.J_dot(d_input, R_inputs[l],
+                    R_states[l] += self.J_dot(d_input, R_activations[l][:, s],
                                               out=tmp_act[l])
                     self.J_dot(d_output, R_states[l],
                                out=R_activations[l][:, s])
@@ -393,15 +394,16 @@ class RNNet(hf.FFNet):
         else:
             trunc_per, trunc_len = self.truncation
 
-        # note: we're just reusing the memory from R_inputs here, not values
-        R_error = R_inputs
+        R_error = [np.zeros((batch_size, l), dtype=self.dtype)
+                   for l in self.shape]
+        R_deltas = [np.zeros((batch_size, l), dtype=self.dtype)
+                        for l in self.shape]
 
         for n in range(trunc_per - 1, sig_len, trunc_per):
-            R_deltas = [np.zeros((batch_size, l), dtype=self.dtype)
-                        for l in self.shape]
-            for x in R_states:
-                if x is not None:
-                    x[...] = 0
+            for i in range(self.n_layers):
+                R_deltas[i][...] = 0
+                if R_states[i] is not None:
+                    R_states[i][...] = 0
 
             for s in range(n, np.maximum(n - trunc_len, -1), -1):
                 error = self.loss.d2_loss([a[:, s] for a in self.activations],
@@ -409,7 +411,8 @@ class RNNet(hf.FFNet):
 
                 for l in range(self.n_layers - 1, -1, -1):
                     if error[l] is not None:
-                        R_error[l] = error[l] * R_activations[l][:, s]
+                        R_error[l][...] = error[l]
+                        R_error[l] *= R_activations[l][:, s]
                     else:
                         R_error[l][...] = 0
 
@@ -529,8 +532,6 @@ class RNNet(hf.FFNet):
         """Compute Gauss-Newton matrix-vector product."""
 
         from pycuda import gpuarray
-
-        # TODO: move this to gpu submodule
 
         Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
         GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
@@ -711,8 +712,8 @@ class RNNet(hf.FFNet):
 
         # compute the Jacobian
         J = [None for _ in self.layers]
+        inc_i = np.zeros(N)
         for i in range(N):
-            inc_i = np.zeros(N)
             inc_i[i] = eps
 
             inc = self.forward(self.inputs[:, start:stop], self.W + inc_i,
@@ -730,6 +731,8 @@ class RNNet(hf.FFNet):
                     J[l] = J_i[..., None]
                 else:
                     J[l] = np.concatenate((J[l], J_i[..., None]), axis=-1)
+
+            inc_i[i] = 0
 
         return J
 

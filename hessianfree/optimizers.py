@@ -68,7 +68,8 @@ class HessianFree(Optimizer):
         if self.init_delta is None:
             self.init_delta = np.zeros_like(self.net.W)
         deltas = self.conjugate_gradient(self.init_delta * 0.95, grad,
-                                         iters=self.CG_iter)
+                                         iters=self.CG_iter,
+                                         printing=printing and self.net.debug)
 
         if printing:
             print "CG steps", deltas[-1][0]
@@ -80,7 +81,7 @@ class HessianFree(Optimizer):
         for j in range(len(deltas) - 1, -1, -1):
             prev_err = self.net.error(self.net.W + deltas[j][1])
             # note: we keep using the cached inputs, not rerunning the plant
-            # (if there is one). that is, we are evaluating whether the input
+            # (if there is one). that is, we are evaluating whether the update
             # improves on those inputs, not whether it improves the overall
             # objective. we could do the latter instead, but it makes things
             # more prone to instability.
@@ -98,7 +99,7 @@ class HessianFree(Optimizer):
         # update damping parameter (compare improvement predicted by
         # quadratic model to the actual improvement in the error)
         quad = (0.5 * np.dot(self.net.calc_G(delta, damping=self.damping),
-                            delta) +
+                             delta) +
                 np.dot(grad, delta))
 
         improvement_ratio = ((new_err - err) / quad) if quad != 0 else 1
@@ -143,9 +144,11 @@ class HessianFree(Optimizer):
 
         return l_rate * delta
 
-    def conjugate_gradient(self, init_delta, grad, iters=250):
+    def conjugate_gradient(self, init_delta, grad, iters=250, printing=False):
         """Find minimum of quadratic approximation using conjugate gradient
         algorithm."""
+
+        # TODO: make a GPU version of CG
 
         store_iter = 5
         store_mult = 1.3
@@ -163,7 +166,7 @@ class HessianFree(Optimizer):
             self.net.check_grad(grad)
 
         for i in range(iters):
-            if self.net.debug:
+            if printing:
                 print "-" * 20
                 print "CG iteration", i
                 print "delta norm", np.linalg.norm(delta)
@@ -174,9 +177,10 @@ class HessianFree(Optimizer):
             # calculate step size
             step = res_norm / np.dot(direction, G_dir)
 
-            if self.net.debug:
+            if printing:
                 print "step", step
 
+            if self.net.debug:
                 self.net.check_G(G_dir, direction, self.damping)
 
                 assert np.isfinite(step)
@@ -193,7 +197,7 @@ class HessianFree(Optimizer):
             residual -= step * G_dir
             new_res_norm = np.dot(residual, residual)
 
-            if new_res_norm < 1e-30:
+            if new_res_norm < 1e-20:
                 # early termination (mainly to prevent numerical errors);
                 # the main termination condition is below.
                 break
@@ -215,7 +219,7 @@ class HessianFree(Optimizer):
 
             gap = max(int(0.1 * i), 10)
 
-            if self.net.debug:
+            if printing:
                 print "termination val", vals[i]
 
             if (i > gap and vals[i - gap] < 0 and

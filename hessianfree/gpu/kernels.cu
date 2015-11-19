@@ -1,44 +1,6 @@
 #include <stdio.h>
 
 
-__global__ void sum_axis(float *A, float *out, const int axis, const int a0, 
-                         const int a1, const int increment)
-{
-    // sum matrix A over the specified axis
-    // TODO: replace this with a reduction kernel
-    
-	int a_i = blockDim.x*blockIdx.x + threadIdx.x;
-	int start = 0;
-	int stop = 0;
-	int step = 0;
-	if (axis == 0)
-	{
-	    if (a_i >= a1)
-	       return;
-		start = a_i;
-		stop = a0*a1;
-		step = a1;
-	}
-	else
-	{
-	    if (a_i >= a0)
-	       return;
-		start = a_i*a1;
-		stop = start + a1;
-		step = 1;
-	}
-
-	float sum = 0;
-	for (int i = start; i < stop; i += step)
-		sum += A[i];
-	
-	if (increment)
-	   out[a_i] += sum;
-	else
-	   out[a_i] = sum;
-}
-
-
 __global__ void sum_cols(float *A, float *out, const int increment,
                          const int a0, const int a1)
 {

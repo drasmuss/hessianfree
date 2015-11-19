@@ -57,8 +57,6 @@ def test_strucdamping(use_GPU):
 
 
 def test_continuous(use_GPU):
-    """Example of a network using the Continuous nonlinearity."""
-
     n_inputs = 3
     sig_len = 5
     nl = Continuous(Logistic(), tau=np.random.uniform(1, 3, size=10), dt=0.9)

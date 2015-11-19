@@ -11,7 +11,6 @@ of the 27th International Conference on Machine Learning.
 
 from collections import defaultdict, OrderedDict
 from copy import deepcopy
-from functools import partial
 import pickle
 
 import numpy as np
@@ -35,8 +34,7 @@ class FFNet(object):
             evaluate network (see loss_funcs.py)
         :param W_init_params: parameter dict passed to init_weights() (see
             parameter descriptions in that function)
-        :param use_GPU: run certain operations on GPU to speed them up
-            (requires PyCUDA to be installed)
+        :param use_GPU: run curvature calculation on GPU (requires PyCUDA)
         :param load_weights: load initial weights from given array or filename
         :param debug: activates (expensive) features to help with debugging
         """
@@ -86,10 +84,6 @@ class FFNet(object):
                                  np.arange(1, self.n_layers)):
                 conns[pre] = [post]
 
-        # add empty connection for last layer (just helps smooth the code
-        # elsewhere)
-        conns[self.n_layers - 1] = []
-
         self.conns = OrderedDict(sorted(conns.items(), key=lambda x: x[0]))
         # note: conns is an ordered dict sorted by layer so that we can
         # reliably loop over the items (in compute_offsets and init_weights)
@@ -103,7 +97,11 @@ class FFNet(object):
 
                 if pre >= post:
                     raise ValueError("Can only connect from lower to higher "
-                                     " layers (%s >= %s)" % (pre, post))
+                                     "layers (%s >= %s)" % (pre, post))
+
+        # add empty connection for last layer (just helps smooth the code
+        # elsewhere)
+        self.conns[self.n_layers - 1] = []
 
         # compute indices for the different connection weight matrices in the
         # overall parameter vector
@@ -127,7 +125,7 @@ class FFNet(object):
                                  "match expected length")
 
             if self.W.dtype != self.dtype:
-                raise TypeError("Loaded weights (%s) don't match "
+                raise TypeError("Loaded weights dtype (%s) doesn't match "
                                 "self.dtype (%s)" % (self.W.dtype, self.dtype))
 
         # initialize GPU
@@ -146,7 +144,7 @@ class FFNet(object):
     def run_batches(self, inputs, targets, optimizer,
                     max_epochs=1000, batch_size=None, test=None,
                     target_err=1e-6, plotting=False, test_err=None,
-                    file_output=None):
+                    file_output=None, print_period=10):
         """Apply the given optimizer with a sequence of minibatches.
 
         :param inputs: input vectors (or a callable plant that will generate
@@ -165,13 +163,13 @@ class FFNet(object):
             the test data (e.g., classification error)
         :param file_output: output files from the run will use this as a prefix
             (if None then don't output files)
+        :param print_period: print out information about the run every x epochs
         """
 
-        if self.debug:
+        if print_period is None:
+            print_period = max_epochs
+        elif self.debug:
             print_period = 1
-#             np.seterr(all="raise")
-        else:
-            print_period = 10
 
         test_errs = []
         self.best_W = None
@@ -292,6 +290,11 @@ class FFNet(object):
             self.inputs = np.asarray(inputs.get_inputs(), dtype=np.float32)
             self.targets = np.asarray(inputs.get_targets(), dtype=np.float32)
 
+        # allocate temporary space for intermediate values, to save on
+        # memory allocations
+        self.tmp_space = [np.zeros(a.shape, self.dtype)
+                          for a in self.activations]
+
         if self.use_GPU:
             from pycuda import gpuarray
             self.GPU_activations = [
@@ -309,7 +312,7 @@ class FFNet(object):
                                   for a in self.activations]
 
     def forward(self, input, params, deriv=False):
-        """Compute feedforward activations for given input and parameters.
+        """Compute layer activations for given input and parameters.
 
         If deriv=True then also compute the derivative of the activations.
         """
@@ -334,9 +337,11 @@ class FFNet(object):
                     W, b = self.get_weights(params, (pre, i))
                     inputs += np.dot(activations[pre], W)
                     inputs += b
-                    # note: we're applying a bias on each connection (rather
-                    # than one for each neuron). just because it's easier than
-                    # tracking how many connections there are for each layer.
+                    # note: we're applying a bias on each connection to a
+                    # neuron (rather than one for each neuron). just because
+                    # it's easier than tracking how many connections there are
+                    # for each layer (but we could do it if it becomes
+                    # important).
             activations[i] = self.layers[i].activation(inputs)
 
             if deriv:
@@ -390,13 +395,16 @@ class FFNet(object):
 
         if J.ndim == 2:
             # note: the first dimension is the batch, so ndim==2 means
-            # this is a diagonal representation
+            # this is a vector representation
 
             if out is None:
-                return J * vec
+                out = J * vec
+            elif out is vec:
+                out *= J
             else:
-                out[...] = J * vec
-                return out
+                out[...] = vec
+                out *= J
+            return out
         else:
             if transpose:
                 J = np.transpose(J, (0, 2, 1))
@@ -404,8 +412,13 @@ class FFNet(object):
             if out is None:
                 # passing out=None fails for some reason
                 return np.einsum("ijk,ik->ij", J, vec)
+
+            if out is vec:
+                tmp_vec = vec.copy()
             else:
-                return np.einsum("ijk,ik->ij", J, vec, out=out)
+                tmp_vec = vec
+
+            return np.einsum("ijk,ik->ij", J, tmp_vec, out=out)
 
     def calc_grad(self):
         """Compute parameter gradient."""
@@ -452,13 +465,15 @@ class FFNet(object):
 
         eps = 1e-6
         grad = np.zeros(calc_grad.shape)
+        inc_W = np.zeros_like(self.W)
         for i in range(len(self.W)):
-            inc_W = np.zeros_like(self.W)
             inc_W[i] = eps
 
             error_inc = self.error(self.W + inc_W, self.inputs, self.targets)
             error_dec = self.error(self.W - inc_W, self.inputs, self.targets)
             grad[i] = (error_inc - error_dec) / (2 * eps)
+
+            inc_W[i] = 0
         try:
             assert np.allclose(calc_grad, grad, rtol=1e-3)
         except AssertionError:
@@ -477,46 +492,44 @@ class FFNet(object):
 
         Gv = np.zeros(self.W.size, dtype=self.dtype)
 
-        # allocate temporary space for intermediate values, to save on
-        # memory allocations
-        tmp_space = [np.zeros(a.shape, self.dtype) for a in self.activations]
-
         # R forward pass
         R_activations = [np.zeros_like(a) for a in self.activations]
         for i in range(1, self.n_layers):
-            R_input = np.zeros_like(self.activations[i])
             for pre in self.back_conns[i]:
                 vw, vb = self.get_weights(v, (pre, i))
                 Ww, _ = self.get_weights(self.W, (pre, i))
-                R_input += np.dot(self.activations[pre], vw, out=tmp_space[i])
-                R_input += vb
-                R_input += np.dot(R_activations[pre], Ww, out=tmp_space[i])
+                R_activations[i] += np.dot(self.activations[pre], vw,
+                                           out=self.tmp_space[i])
+                R_activations[i] += vb
+                R_activations[i] += np.dot(R_activations[pre], Ww,
+                                           out=self.tmp_space[i])
 
-            self.J_dot(self.d_activations[i], R_input,
+            self.J_dot(self.d_activations[i], R_activations[i],
                        out=R_activations[i])
 
         # backward pass
-        R_deltas = [np.zeros_like(a) for a in self.activations]
-
-        R_error = self.loss.d2_loss(self.activations, self.targets)
+        error = self.loss.d2_loss(self.activations, self.targets)
+        R_error = R_activations
 
         for i in range(self.n_layers - 1, -1, -1):
-            if R_error[i] is not None:
-                R_error[i] *= R_activations[i]
+            if error[i] is not None:
+                # note: R_error[i] is already set to R_activations[i]
+                R_error[i] *= error[i]
             else:
-                R_error[i] = np.zeros_like(self.activations[i])
+                R_error[i][...] = 0
 
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.W, (i, post))
 
-                R_error[i] += np.dot(R_deltas[post], W.T, out=tmp_space[i])
+                R_error[i] += np.dot(R_error[post], W.T,
+                                     out=self.tmp_space[i])
 
                 W_g, b_g = self.get_weights(Gv, (i, post))
-                np.dot(self.activations[i].T, R_deltas[post], out=W_g)
-                np.sum(R_deltas[post], axis=0, out=b_g)
+                np.dot(self.activations[i].T, R_error[post], out=W_g)
+                np.sum(R_error[post], axis=0, out=b_g)
 
             self.J_dot(self.d_activations[i], R_error[i],
-                       out=R_deltas[i], transpose=True)
+                       out=R_error[i], transpose=True)
 
         Gv /= len(self.inputs)
 
@@ -529,9 +542,6 @@ class FFNet(object):
 
         Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
         GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
-
-        # TODO: there are a bunch of memory optimizations here that we could
-        # probably port to the standard calc_G
 
         # R forward pass
 
@@ -557,7 +567,6 @@ class FFNet(object):
 
         # backward pass
         R_error = R_activations
-        R_deltas = R_error
 
         for i in range(self.n_layers - 1, -1, -1):
             if self.GPU_d2_loss[i] is not None:
@@ -570,16 +579,16 @@ class FFNet(object):
                 W, _ = self.get_weights(self.GPU_W, (i, post))
                 offset, W_end, b_end = self.offsets[(i, post)]
 
-                hf.gpu.m_dot(R_deltas[post], W,
-                             transpose_b=True, out=R_error[i], increment=True)
+                hf.gpu.m_dot(R_error[post], W, transpose_b=True,
+                             out=R_error[i], increment=True)
 
-                hf.gpu.m_dot(self.GPU_activations[i], R_deltas[post],
+                hf.gpu.m_dot(self.GPU_activations[i], R_error[post],
                              transpose_a=True, out=Gv[offset:W_end])
 
-                hf.gpu.sum_cols(R_deltas[post], out=Gv[W_end:b_end])
+                hf.gpu.sum_cols(R_error[post], out=Gv[W_end:b_end])
 
             hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
-                         out=R_deltas[i], transpose_J=True)
+                         out=R_error[i], transpose_J=True)
 
         Gv /= len(self.inputs)
 
@@ -597,8 +606,8 @@ class FFNet(object):
 
         # compute the Jacobian
         J = [None for _ in self.layers]
+        inc_i = np.zeros(N)
         for i in range(N):
-            inc_i = np.zeros(N)
             inc_i[i] = eps
 
             inc = self.forward(self.inputs, self.W + inc_i)
@@ -610,6 +619,8 @@ class FFNet(object):
                     J[l] = J_i[..., None]
                 else:
                     J[l] = np.concatenate((J[l], J_i[..., None]), axis=-1)
+
+            inc_i[i] = 0
 
         return J
 
@@ -644,7 +655,7 @@ class FFNet(object):
             print "calc_G / finite G"
             print calc_G / Gv
             raise
-#             raw_input("Paused (press enter to continue)")
+            raw_input("Paused (press enter to continue)")
 
     def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
         """Weight initialization, given shapes of weight matrices.
@@ -758,8 +769,8 @@ class FFNet(object):
             # sanity checks
             if (isinstance(t, hf.loss_funcs.CrossEntropy) and
                 np.any(self.layers[-1].activation(np.linspace(-80, 80,
-                                                              100)[None, :])
-                       <= 0)):
+                                                              100)[None, :]) <=
+                       0)):
                 # this won't catch everything, but hopefully a useful warning
                 raise ValueError("Must use positive activation function "
                                  "with cross-entropy error")
