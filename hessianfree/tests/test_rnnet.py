@@ -80,7 +80,6 @@ def test_continuous(use_GPU):
     assert rnn.loss.batch_loss(outputs, targets) < 1e-4
 
 
-@pytest.mark.xfail
 def test_plant(use_GPU):
     np.random.seed(0)
     n_inputs = 10
@@ -197,18 +196,14 @@ def test_plant(use_GPU):
 
 
 def test_truncation(use_GPU):
-    n_inputs = 3
-    sig_len = 10
+    n_inputs = 2
+    sig_len = 6
 
-    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
-                      np.ones(sig_len))[:, :, None]
-    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
-                       np.linspace(0, 1, sig_len))[:, :, None]
-    inputs = inputs.astype(np.float32)
-    targets = targets.astype(np.float32)
+    inputs = np.ones((n_inputs, sig_len, 1), dtype=np.float32) * 0.5
+    targets = np.ones((n_inputs, sig_len, 1), dtype=np.float32) * 0.5
 
     rnn = hf.RNNet(shape=[1, 10, 1], debug=True, use_GPU=use_GPU,
-                   truncation=(5, 5))
+                   truncation=(3, 3))
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     max_epochs=30)

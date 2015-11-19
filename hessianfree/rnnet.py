@@ -720,11 +720,11 @@ class RNNet(hf.FFNet):
             dec = self.forward(self.inputs[:, start:stop], self.W - inc_i,
                                init_activations=init_a, init_state=init_s)
 
-            if start > 0:
-                inc = np.concatenate((prev[-1], inc), axis=1)
-                dec = np.concatenate((prev[-1], dec), axis=1)
-
             for l in range(self.n_layers):
+                if start > 0:
+                    inc[l] = np.concatenate((prev[l], inc[l]), axis=1)
+                    dec[l] = np.concatenate((prev[l], dec[l]), axis=1)
+
                 J_i = (inc[l] - dec[l]) / (2 * eps)
                 if J[l] is None:
                     J[l] = J_i[..., None]
