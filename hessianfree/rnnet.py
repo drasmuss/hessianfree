@@ -319,10 +319,14 @@ class RNNet(hf.FFNet):
             print calc_grad / grad
             raw_input("Paused (press enter to continue)")
 
-    def calc_G(self, v, damping=0):
+    def calc_G(self, v, damping=0, out=None):
         """Compute Gauss-Newton matrix-vector product."""
 
-        Gv = np.zeros(self.W.size, dtype=self.dtype)
+        if out is None:
+            Gv = np.zeros(self.W.size, dtype=self.dtype)
+        else:
+            Gv = out
+            Gv[...] = 0
 
         batch_size = self.inputs.shape[0]
         sig_len = self.inputs.shape[1]
@@ -528,13 +532,21 @@ class RNNet(hf.FFNet):
                 self.GPU_tmp_space[i] = a.reshape((a.shape[1], a.shape[0],
                                                    a.shape[2]))
 
-    def GPU_calc_G(self, v, damping=0):
+    def GPU_calc_G(self, v, damping=0, out=None):
         """Compute Gauss-Newton matrix-vector product."""
 
         from pycuda import gpuarray
 
-        Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
-        GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
+        if out is None:
+            Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
+        else:
+            Gv = out
+            Gv.fill(0)
+
+        if not isinstance(v, gpuarray.GPUArray):
+            GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
+        else:
+            GPU_v = v
 
         batch_size = self.inputs.shape[0]
         sig_len = self.inputs.shape[1]
@@ -683,10 +695,12 @@ class RNNet(hf.FFNet):
         Gv /= batch_size
 
         # Tikhonov damping
-        GPU_v *= damping
-        Gv += GPU_v
+        Gv += GPU_v * damping
 
-        return Gv.get(pagelocked=True)
+        if isinstance(v, gpuarray.GPUArray):
+            return Gv
+        else:
+            return Gv.get(pagelocked=True)
 
     def check_J(self, start=0, stop=None):
         """Compute the Jacobian of the network via finite differences."""

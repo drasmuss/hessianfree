@@ -335,10 +335,8 @@ def plant(plots=True):
 
     plant = Plant(A, B, targets, init1)
 
-    rnn = RNNet(shape=[2, 10, 10, 2], struc_damping=None,
-                layers=[Linear(), Tanh(), Tanh(), plant],
-                rec_layers=[False, True, True, False],
-                conns={0: [1, 2], 1: [2], 2: [3]},
+    rnn = RNNet(shape=[2, 16, 2], struc_damping=None,
+                layers=[Linear(), Tanh(), plant],
                 W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
 
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,

@@ -98,7 +98,7 @@ class HessianFree(Optimizer):
 
         # update damping parameter (compare improvement predicted by
         # quadratic model to the actual improvement in the error)
-        quad = (0.5 * np.dot(self.net.calc_G(delta, damping=self.damping),
+        quad = (0.5 * np.dot(self.calc_G(delta, damping=self.damping),
                              delta) +
                 np.dot(grad, delta))
 
@@ -148,46 +148,62 @@ class HessianFree(Optimizer):
         """Find minimum of quadratic approximation using conjugate gradient
         algorithm."""
 
-        # TODO: make a GPU version of CG
+        if self.net.debug:
+            self.net.check_grad(grad)
 
         store_iter = 5
         store_mult = 1.3
         deltas = []
+        grad = -grad  # note negative, some CG algorithms are flipped
         vals = np.zeros(iters, dtype=self.net.dtype)
 
-        base_grad = -grad  # note negative
-        delta = init_delta
-        residual = base_grad.copy()
-        residual -= self.calc_G(init_delta, damping=self.damping)
-        res_norm = np.dot(residual, residual)
-        direction = residual.copy()
+        if self.net.use_GPU:
+            from pycuda import gpuarray
+            base_grad = gpuarray.to_gpu(np.asarray(grad, dtype=np.float32))
+            delta = gpuarray.to_gpu(np.asarray(init_delta, dtype=np.float32))
+            G_dir = gpuarray.zeros(grad.shape, dtype=np.float32)
+            # TODO: is there a way to get a float value out of dot rather than
+            # a 0-d array, so we don't have to do the get()?
+            dot = lambda a, b: gpuarray.dot(a, b).get()
+            get = lambda x: np.asarray(x.get(pagelocked=True),
+                                       dtype=self.net.dtype)
+        else:
+            base_grad = grad
+            delta = init_delta
+            G_dir = np.zeros_like(grad)
+            dot = np.dot
+            get = lambda x: x.copy()
 
-        if self.net.debug:
-            self.net.check_grad(grad)
+        residual = base_grad.copy()
+        residual -= self.calc_G(delta, damping=self.damping, out=G_dir)
+        res_norm = dot(residual, residual)
+        direction = residual.copy()
 
         for i in range(iters):
             if printing:
                 print "-" * 20
                 print "CG iteration", i
-                print "delta norm", np.linalg.norm(delta)
-                print "direction norm", np.linalg.norm(direction)
+                print "delta norm", np.linalg.norm(get(delta))
+                print "direction norm", np.linalg.norm(get(direction))
 
-            G_dir = self.calc_G(direction, damping=self.damping)
+            self.calc_G(direction, damping=self.damping, out=G_dir)
 
             # calculate step size
-            step = res_norm / np.dot(direction, G_dir)
+            step = res_norm / dot(direction, G_dir)
 
             if printing:
                 print "step", step
 
             if self.net.debug:
-                self.net.check_G(G_dir, direction, self.damping)
+                tmp_G_dir = get(G_dir)
+                tmp_dir = get(direction)
+                self.net.check_G(tmp_G_dir, tmp_dir, self.damping)
 
                 assert np.isfinite(step)
                 assert step >= 0
-                assert (np.linalg.norm(np.dot(direction, G_dir)) >=
-                        np.linalg.norm(np.dot(direction,
-                                              self.net.calc_G(direction,
+                assert (np.linalg.norm(np.dot(tmp_dir, tmp_G_dir)) >=
+                        np.linalg.norm(np.dot(tmp_dir,
+                                              self.net.calc_G(tmp_dir,
                                                               damping=0))))
 
             # update weight delta
@@ -195,7 +211,7 @@ class HessianFree(Optimizer):
 
             # update residual
             residual -= step * G_dir
-            new_res_norm = np.dot(residual, residual)
+            new_res_norm = dot(residual, residual)
 
             if new_res_norm < 1e-20:
                 # early termination (mainly to prevent numerical errors);
@@ -211,12 +227,11 @@ class HessianFree(Optimizer):
 
             # store deltas for backtracking
             if i == store_iter:
-                deltas += [(i, np.copy(delta))]
+                deltas += [(i, get(delta))]
                 store_iter = int(store_iter * store_mult)
 
             # martens termination conditions
-            # TODO: double check this termination condition given previous bug
-            vals[i] = -0.5 * np.dot(residual + base_grad, delta)
+            vals[i] = -0.5 * dot(residual + base_grad, delta)
 
             gap = max(int(0.1 * i), 10)
 
@@ -227,7 +242,7 @@ class HessianFree(Optimizer):
                     (vals[i] - vals[i - gap]) / vals[i] < 5e-6 * gap):
                 break
 
-        deltas += [(i, np.copy(delta))]
+        deltas += [(i, get(delta))]
 
         return deltas
 

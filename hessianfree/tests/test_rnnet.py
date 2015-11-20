@@ -23,10 +23,10 @@ def test_integrator(use_GPU):
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
-    rnn = hf.RNNet(shape=[1, 10, 1], debug=True, use_GPU=use_GPU)
+    rnn = hf.RNNet(shape=[1, 5, 1], debug=True, use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30)
+                    max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
@@ -45,11 +45,11 @@ def test_strucdamping(use_GPU):
     targets = targets.astype(np.float32)
 
     # TODO: run with debug=True when struc_damping check works
-    rnn = hf.RNNet(shape=[1, 10, 1], debug=False, struc_damping=0.1,
+    rnn = hf.RNNet(shape=[1, 5, 1], debug=False, struc_damping=0.1,
                    use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30)
+                    max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
@@ -59,7 +59,7 @@ def test_strucdamping(use_GPU):
 def test_continuous(use_GPU):
     n_inputs = 3
     sig_len = 5
-    nl = Continuous(Logistic(), tau=np.random.uniform(1, 3, size=10), dt=0.9)
+    nl = Continuous(Logistic(), tau=np.random.uniform(1, 3, size=5), dt=0.9)
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
     targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
@@ -67,11 +67,11 @@ def test_continuous(use_GPU):
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
-    rnn = hf.RNNet(shape=[1, 10, 1], layers=[Linear(), nl, Logistic()],
+    rnn = hf.RNNet(shape=[1, 5, 1], layers=[Linear(), nl, Logistic()],
                    debug=True, use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30)
+                    max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
@@ -171,13 +171,12 @@ def test_plant(use_GPU):
 
     plant = Plant(A, B, targets, init1)
 
-    rnn = hf.RNNet(shape=[2, 10, 10, 2], debug=False,
-                   layers=[Linear(), Tanh(), Tanh(), plant],
-                   conns={0: [1, 2], 1: [2], 2: [3]},
+    rnn = hf.RNNet(shape=[2, 16, 2], debug=False,
+                   layers=[Linear(), Tanh(), plant],
                    W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01},
                    use_GPU=use_GPU)
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=100, plotting=False)
+                    max_epochs=100, plotting=False, print_period=None)
 
     outputs = rnn.forward(plant, rnn.W)
 
@@ -200,11 +199,11 @@ def test_truncation(use_GPU):
     inputs = np.ones((n_inputs, sig_len, 1), dtype=np.float32) * 0.5
     targets = np.ones((n_inputs, sig_len, 1), dtype=np.float32) * 0.5
 
-    rnn = hf.RNNet(shape=[1, 10, 1], debug=True, use_GPU=use_GPU,
+    rnn = hf.RNNet(shape=[1, 5, 1], debug=True, use_GPU=use_GPU,
                    truncation=(3, 3))
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30)
+                    max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
