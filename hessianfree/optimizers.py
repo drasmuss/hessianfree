@@ -157,7 +157,7 @@ class HessianFree(Optimizer):
 
         base_grad = -grad  # note negative
         delta = init_delta
-        residual = base_grad
+        residual = base_grad.copy()
         residual -= self.calc_G(init_delta, damping=self.damping)
         res_norm = np.dot(residual, residual)
         direction = residual.copy()
@@ -215,6 +215,7 @@ class HessianFree(Optimizer):
                 store_iter = int(store_iter * store_mult)
 
             # martens termination conditions
+            # TODO: double check this termination condition given previous bug
             vals[i] = -0.5 * np.dot(residual + base_grad, delta)
 
             gap = max(int(0.1 * i), 10)
