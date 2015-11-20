@@ -45,6 +45,7 @@ class FFNet(object):
         self.shape = shape
         self.n_layers = len(shape)
         self.dtype = np.float64 if debug else np.float32
+        self.mask = None
         self._optimizer = None
         self.rng = np.random.RandomState() if rng is None else rng
 
@@ -211,6 +212,10 @@ class FFNet(object):
             update = optimizer.compute_update(i % print_period == 0)
 
             assert update.dtype == self.dtype
+
+            # apply mask
+            if self.mask is not None:
+                update[self.mask] = 0
 
             self.W += update
 
