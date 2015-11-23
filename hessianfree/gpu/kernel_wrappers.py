@@ -109,28 +109,29 @@ def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
                       transpose_v=not transpose_a, batch_a=False, batch_v=True,
                       increment=increment, transpose_out=True)
 
-    a_shape = (np.int32(a.shape[0]), np.int32(a.shape[1]))
-    b_shape = (np.int32(b.shape[0]), np.int32(b.shape[1]))
+    # note: these transposes don't actually rearrange anything in memory,
+    # just changing the shape
     if transpose_a:
-        a_shape = (a_shape[1], a_shape[0])
+        a = a.T
     if transpose_b:
-        b_shape = (b_shape[1], b_shape[0])
+        b = b.T
 
-    assert a_shape[1] == b_shape[0]
+    assert a.shape[1] == b.shape[0]
     assert out is None or (out is not a and out is not b)
 
     if out is None:
-        out = gpuarray.zeros((a_shape[0], b_shape[1]), dtype=np.float32)
+        out = gpuarray.zeros((a.shape[0], b.shape[1]), dtype=np.float32)
 
     # note: the block is transposed from what you might think, so it's
     # (b_shape[1], a_shape[0]), because we want the x threads aligned with
     # rows to support memory coalescing
-    block_x = block_y = np.int32(32)
-    grid = (b_shape[1] / block_x + (b_shape[1] % block_x != 0),
-            a_shape[0] / block_y + (a_shape[0] % block_y != 0))
+    block_x = block_y = 32
+    grid = (b.shape[1] / block_x + (b.shape[1] % block_x != 0),
+            a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 
     hf.gpu.m_dot_kernel[transpose_a][transpose_b](
-        a, b, out, a_shape[0], a_shape[1], b_shape[1], np.int32(increment),
+        a, b, out, np.int32(a.shape[0]), np.int32(a.shape[1]),
+        np.int32(b.shape[1]), np.int32(increment),
         grid=grid, block=(block_x, block_y, 1),
         shared=(block_x + 1) * block_y * 8)
 
@@ -215,7 +216,7 @@ def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
     else:
         grid_y = 1
 
-    a_shape = (np.int32(a.shape[0 + batch_a]), np.int32(a.shape[1 + batch_a]))
+    a_shape = (a.shape[0 + batch_a], a.shape[1 + batch_a])
     if transpose_a:
         a_shape = (a_shape[1], a_shape[0])
 
@@ -231,7 +232,8 @@ def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
 
     hf.gpu.mv_dot_kernel[transpose_a][transpose_v](
         a, v, out, np.int32(batch_a), np.int32(batch_v),
-        a_shape[0], a_shape[1], np.int32(increment), np.int32(transpose_out),
+        np.int32(a_shape[0]), np.int32(a_shape[1]),
+        np.int32(increment), np.int32(transpose_out),
         block=(block_x, block_y, 1), grid=grid)
 
     return out
