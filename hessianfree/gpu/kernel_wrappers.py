@@ -117,6 +117,7 @@ def m_dot(a, b, out=None, transpose_a=False, transpose_b=False,
         b_shape = (b_shape[1], b_shape[0])
 
     assert a_shape[1] == b_shape[0]
+    assert out is None or (out is not a and out is not b)
 
     if out is None:
         out = gpuarray.zeros((a_shape[0], b_shape[1]), dtype=np.float32)
@@ -152,6 +153,8 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False):
         return out
 
     if out is v:
+        # note: we allow out to be v in this function because it can be
+        # handled efficiently in the element-wise case
         tmp_v = v.copy()
     else:
         tmp_v = v
@@ -168,8 +171,7 @@ def sum_cols(a, out=None, increment=False):
     block_x = min(32, a.shape[1])
     block_y = 32
 
-    grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
-            a.shape[0] / block_y + (a.shape[0] % block_y != 0))
+    grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0), 1)
 
     gpu_sum_cols = hf.gpu.kernels.get_function("sum_cols")
     gpu_sum_cols(a, out, np.int32(increment),
@@ -197,19 +199,21 @@ def iadd(a, b):
 def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
            transpose_out=False, batch_a=False, batch_v=False, increment=False):
 
-    if batch_a:
-        grid_y = a.shape[0]
-    elif batch_v:
-        grid_y = v.shape[1 - transpose_v]
-    else:
-        grid_y = 1
-
     # transpose_v only applies if v is batched
     assert not transpose_v or batch_v
 
     # if a and v are both batched, then the batches must align
     assert (not (batch_a and batch_v) or
             (transpose_v and a.shape[0] == v.shape[0]))
+
+    assert out is None or (out is not a and out is not v)
+
+    if batch_a:
+        grid_y = a.shape[0]
+    elif batch_v:
+        grid_y = v.shape[1 - transpose_v]
+    else:
+        grid_y = 1
 
     a_shape = (np.int32(a.shape[0 + batch_a]), np.int32(a.shape[1 + batch_a]))
     if transpose_a:

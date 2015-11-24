@@ -50,11 +50,6 @@ class HessianFree(Optimizer):
         self.plots = defaultdict(list)
 
     def compute_update(self, printing=False):
-        if self.net.use_GPU:
-            self.calc_G = self.net.GPU_calc_G
-        else:
-            self.calc_G = self.net.calc_G
-
         err = self.net.error()  # note: don't reuse previous error (diff batch)
 
         # compute gradient
@@ -167,12 +162,14 @@ class HessianFree(Optimizer):
             dot = lambda a, b: gpuarray.dot(a, b).get()
             get = lambda x: np.asarray(x.get(pagelocked=True),
                                        dtype=self.net.dtype)
+            self.calc_G = self.net.GPU_calc_G
         else:
             base_grad = grad
             delta = init_delta
             G_dir = np.zeros_like(grad)
             dot = np.dot
             get = lambda x: x.copy()
+            self.calc_G = self.net.calc_G
 
         residual = base_grad.copy()
         residual -= self.calc_G(delta, damping=self.damping, out=G_dir)
@@ -192,6 +189,7 @@ class HessianFree(Optimizer):
             step = res_norm / dot(direction, G_dir)
 
             if printing:
+                print "G_dir norm", np.linalg.norm(get(G_dir))
                 print "step", step
 
             if self.net.debug:

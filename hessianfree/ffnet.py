@@ -39,6 +39,9 @@ class FFNet(object):
         :param debug: activates (expensive) features to help with debugging
         """
 
+        # TODO: have each network keep its own rng, rather than using
+        # the default np.random
+
         self.use_GPU = use_GPU
         self.debug = debug
         self.shape = shape
@@ -201,6 +204,7 @@ class FFNet(object):
                 raise TypeError("Input type must be np.float32")
 
             assert self.activations[-1].dtype == self.dtype
+            assert np.all([np.all(np.isfinite(a)) for a in self.activations])
 
             # compute update
             update = optimizer.compute_update(i % print_period == 0)
@@ -545,7 +549,7 @@ class FFNet(object):
     def GPU_calc_G(self, v, damping=0, out=None):
         from pycuda import gpuarray
 
-        if out is None:
+        if out is None or not isinstance(out, gpuarray.GPUArray):
             Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
         else:
             Gv = out
@@ -612,7 +616,12 @@ class FFNet(object):
         if isinstance(v, gpuarray.GPUArray):
             return Gv
         else:
-            return Gv.get(pagelocked=True)
+            if out is not None:
+                out[...] = Gv.get(pagelocked=True)
+            else:
+                out = Gv.get(pagelocked=True)
+
+            return out
 
     def check_J(self):
         """Compute the Jacobian of the network via finite differences."""

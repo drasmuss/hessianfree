@@ -537,7 +537,7 @@ class RNNet(hf.FFNet):
 
         from pycuda import gpuarray
 
-        if out is None:
+        if out is None or not isinstance(out, gpuarray.GPUArray):
             Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
         else:
             Gv = out
@@ -700,7 +700,12 @@ class RNNet(hf.FFNet):
         if isinstance(v, gpuarray.GPUArray):
             return Gv
         else:
-            return Gv.get(pagelocked=True)
+            if out is not None:
+                out[...] = Gv.get(pagelocked=True)
+            else:
+                out = Gv.get(pagelocked=True)
+
+            return out
 
     def check_J(self, start=0, stop=None):
         """Compute the Jacobian of the network via finite differences."""

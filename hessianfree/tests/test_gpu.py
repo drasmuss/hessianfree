@@ -133,7 +133,7 @@ def test_J_dot():
 
 def test_sum_cols():
     for _ in range(10):
-        N = 5
+        N = 200
         a = np.random.randn(np.random.randint(1, N),
                             np.random.randint(1, N)).astype(np.float32)
         a_gpu = gpuarray.to_gpu(a)
@@ -144,8 +144,8 @@ def test_sum_cols():
 
 
 def test_ff_calc_G():
-    inputs = np.random.randn(2, 1).astype(np.float32)
-    ff = hf.FFNet([1, 5, 1], debug=False, use_GPU=True)
+    inputs = np.random.randn(1000, 1).astype(np.float32)
+    ff = hf.FFNet([1, 10, 1], debug=False, use_GPU=True)
     ff.cache_minibatch(inputs, inputs)
 
     v = np.random.randn(ff.W.size).astype(np.float32)
@@ -156,8 +156,8 @@ def test_ff_calc_G():
 
 
 def test_rnn_calc_G():
-    inputs = np.random.randn(2, 3, 1).astype(np.float32)
-    rnn = hf.RNNet([1, 2, 1], debug=False, use_GPU=True)
+    inputs = np.random.randn(1000, 10, 1).astype(np.float32)
+    rnn = hf.RNNet([1, 10, 1], debug=False, use_GPU=True)
     rnn.cache_minibatch(inputs, inputs)
     rnn.optimizer = hf.opt.HessianFree()
 
