@@ -13,13 +13,13 @@ Setup
 Quick start
 -----------
 
-To install the package, open a command terminal and enter:
+Install the package via:
 
 .. code-block:: bash
 
     pip install hessianfree
     
-To make sure things are working, open the python interpreter and enter:
+To make sure things are working, open a python interpreter and enter:
 
 .. code-block:: python
     
