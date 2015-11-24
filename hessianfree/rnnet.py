@@ -401,7 +401,7 @@ class RNNet(hf.FFNet):
         R_error = [np.zeros((batch_size, l), dtype=self.dtype)
                    for l in self.shape]
         R_deltas = [np.zeros((batch_size, l), dtype=self.dtype)
-                        for l in self.shape]
+                    for l in self.shape]
 
         for n in range(trunc_per - 1, sig_len, trunc_per):
             for i in range(self.n_layers):
@@ -488,8 +488,10 @@ class RNNet(hf.FFNet):
 
         if self.use_GPU:
             from pycuda import gpuarray
-            # rearrange GPU activations so that signal is the first axis (so
+            # rearrange cached GPU data so that signal is the first axis (so
             # that each time step is a single block of memory in GPU_calc_G)
+            # TODO: swap around the default data shape so that we don't have
+            # to do this
             for i, a in enumerate(self.GPU_activations):
                 tmp = gpuarray.empty((a.shape[1], a.shape[0], a.shape[2]),
                                      np.float32)
@@ -512,6 +514,15 @@ class RNNet(hf.FFNet):
                             tmp[s, j] = a[:, s, ..., j]
 
                 self.GPU_d_activations[i] = tmp
+
+            for i, a in enumerate(self.GPU_d2_loss):
+                if a is not None:
+                    tmp = gpuarray.empty((a.shape[1], a.shape[0], a.shape[2]),
+                                         np.float32)
+                    for s in range(a.shape[1]):
+                        tmp[s] = a[:, s]
+
+                    self.GPU_d2_loss[i] = tmp
 
             # pre-allocate calc_G arrays
             batch_size = self.inputs.shape[0]
@@ -572,11 +583,11 @@ class RNNet(hf.FFNet):
                         vw, vb = self.get_weights(GPU_v, (pre, l))
                         Ww, _ = self.get_weights(self.GPU_W, (pre, l))
 
-                        hf.gpu.m_dot(self.GPU_activations[pre][s], vw,
-                                     out=R_activations[l][s], increment=True)
+                        hf.gpu.dot(self.GPU_activations[pre][s], vw,
+                                   out=R_activations[l][s], increment=True)
                         hf.gpu.iadd(R_activations[l][s], vb)
-                        hf.gpu.m_dot(R_activations[pre][s], Ww,
-                                     out=R_activations[l][s], increment=True)
+                        hf.gpu.dot(R_activations[pre][s], Ww,
+                                   out=R_activations[l][s], increment=True)
 
                 # recurrent input
                 if self.rec_layers[l]:
@@ -584,11 +595,11 @@ class RNNet(hf.FFNet):
                         # bias input on first step
                         hf.gpu.iadd(R_activations[l][s], v_recs[l][1])
                     else:
-                        hf.gpu.m_dot(self.GPU_activations[l][s - 1],
-                                     v_recs[l][0], out=R_activations[l][s],
-                                     increment=True)
-                        hf.gpu.m_dot(R_activations[l][s - 1], W_recs[l][0],
-                                     out=R_activations[l][s], increment=True)
+                        hf.gpu.dot(self.GPU_activations[l][s - 1],
+                                   v_recs[l][0], out=R_activations[l][s],
+                                   increment=True)
+                        hf.gpu.dot(R_activations[l][s - 1], W_recs[l][0],
+                                   out=R_activations[l][s], increment=True)
 
                 if not self.layers[l].stateful:
                     # note: this requires a memory allocation if d_activations
@@ -631,29 +642,29 @@ class RNNet(hf.FFNet):
             for s in range(n, np.maximum(n - trunc_len, -1), -1):
                 for l in range(self.n_layers - 1, -1, -1):
                     if self.GPU_d2_loss[l] is not None:
-                        R_error[l][...] = self.GPU_d2_loss[l][:, s]
-                        R_error[l] *= R_activations[l][s]
+                        hf.gpu.multiply(self.GPU_d2_loss[l][s],
+                                        R_activations[l][s], out=R_error[l])
                     else:
                         R_error[l].fill(0)
 
                     # error from feedforward connections
                     for post in self.conns[l]:
                         W, _ = self.get_weights(self.GPU_W, (l, post))
-                        hf.gpu.m_dot(R_deltas[post], W, out=R_error[l],
-                                     transpose_b=True, increment=True)
+                        hf.gpu.dot(R_deltas[post], W, out=R_error[l],
+                                   transpose_b=True, increment=True)
 
                         # feedforward gradient
                         W_g, b_g = self.get_weights(Gv, (l, post))
-                        hf.gpu.m_dot(self.GPU_activations[l][s],
-                                     R_deltas[post], out=W_g, transpose_a=True,
-                                     increment=True)
+                        hf.gpu.dot(self.GPU_activations[l][s],
+                                   R_deltas[post], out=W_g, transpose_a=True,
+                                   increment=True)
                         hf.gpu.sum_cols(R_deltas[post], out=b_g,
                                         increment=True)
 
                     # add recurrent error
                     if self.rec_layers[l]:
-                        hf.gpu.m_dot(R_deltas[l], W_recs[l][0], out=R_error[l],
-                                     transpose_b=True, increment=True)
+                        hf.gpu.dot(R_deltas[l], W_recs[l][0], out=R_error[l],
+                                   transpose_b=True, increment=True)
 
                     # compute deltas
                     if not self.layers[l].stateful:
@@ -685,9 +696,9 @@ class RNNet(hf.FFNet):
                     if self.rec_layers[l]:
                         W_g, b_g = self.get_weights(Gv, (l, l))
                         if s > 0:
-                            hf.gpu.m_dot(self.GPU_activations[l][s - 1],
-                                         R_deltas[l], out=W_g,
-                                         transpose_a=True, increment=True)
+                            hf.gpu.dot(self.GPU_activations[l][s - 1],
+                                       R_deltas[l], out=W_g, transpose_a=True,
+                                       increment=True)
                         else:
                             hf.gpu.sum_cols(R_deltas[l], out=b_g,
                                             increment=True)

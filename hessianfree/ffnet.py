@@ -574,11 +574,11 @@ class FFNet(object):
                 vw, vb = self.get_weights(GPU_v, (pre, i))
                 Ww, _ = self.get_weights(self.GPU_W, (pre, i))
 
-                hf.gpu.m_dot(self.GPU_activations[pre], vw,
-                             out=R_input[i], increment=True)
+                hf.gpu.dot(self.GPU_activations[pre], vw,
+                           out=R_input[i], increment=True)
                 hf.gpu.iadd(R_input[i], vb)
-                hf.gpu.m_dot(R_activations[pre], Ww,
-                             out=R_input[i], increment=True)
+                hf.gpu.dot(R_activations[pre], Ww,
+                           out=R_input[i], increment=True)
 
             hf.gpu.J_dot(self.GPU_d_activations[i], R_input[i],
                          out=R_activations[i])
@@ -595,15 +595,15 @@ class FFNet(object):
 
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.GPU_W, (i, post))
-                offset, W_end, b_end = self.offsets[(i, post)]
+                W_g, b_g = self.get_weights(Gv, (i, post))
 
-                hf.gpu.m_dot(R_error[post], W, transpose_b=True,
-                             out=R_error[i], increment=True)
+                hf.gpu.dot(R_error[post], W, transpose_b=True,
+                           out=R_error[i], increment=True)
 
-                hf.gpu.m_dot(self.GPU_activations[i], R_error[post],
-                             transpose_a=True, out=Gv[offset:W_end])
+                hf.gpu.dot(self.GPU_activations[i], R_error[post],
+                           transpose_a=True, out=W_g)  # Gv[offset:W_end])
 
-                hf.gpu.sum_cols(R_error[post], out=Gv[W_end:b_end])
+                hf.gpu.sum_cols(R_error[post], out=b_g)  # Gv[W_end:b_end])
 
             hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
                          out=R_error[i], transpose_J=True)
@@ -611,6 +611,7 @@ class FFNet(object):
         Gv /= len(self.inputs)
 
         # Tikhonov damping
+        # TODO: could replace this with an axpb
         Gv += GPU_v * damping
 
         if isinstance(v, gpuarray.GPUArray):

@@ -69,8 +69,7 @@ __global__ void iadd(float *A, float *v, const int a0, const int a1)
     if (row >= a0 || col >= a1)
         return;
     
-    // load the appropriate part of v for this block into shared memory
-    // TODO: check if this shared memory is faster than just L1 caching   
+    // load the appropriate part of v for this block into shared memory 
     __shared__ float v_share[32];
         
     if (threadIdx.y == 0)
@@ -83,3 +82,18 @@ __global__ void iadd(float *A, float *v, const int a0, const int a1)
     
 }
 
+
+__global__ void multiply(float *A, float *B, float *out, const int size,
+                         const int increment)
+{
+    // TODO: would it be faster to have each thread compute a couple entries?
+    const int index = blockDim.x*blockIdx.x + threadIdx.x;
+    
+    if (index > size)
+        return;
+    
+    if (increment)
+        out[index] += A[index] * B[index];
+    else
+        out[index] = A[index] * B[index];
+}

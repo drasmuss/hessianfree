@@ -16,8 +16,8 @@ def threshold_calc_G():
     """Compare GPU vs CPU performance (can use this to determine at what point
     it is useful to run things on the GPU)."""
 
-    batch_size = range(128, 1024, 128)
-    layer_size = [1] + range(128, 1024, 128)
+    batch_size = range(256, 2049, 256)
+    layer_size = [1] + range(128, 1025, 128)
     reps = 100
 
     times = np.zeros((len(batch_size), len(layer_size), 2))
@@ -39,9 +39,13 @@ def threshold_calc_G():
             ff = hf.FFNet([1, n, n, 1], use_GPU=True)
             ff.cache_minibatch(inputs, targets)
 
+            v = gpuarray.to_gpu(v)
+
             start = time.time()
             for _ in range(reps):
                 ff.GPU_calc_G(v)
+
+            v = v.get()
             times[i, j, 1] = time.time() - start
 
             print "b", b, "n", n, "times", times[i, j]
@@ -50,11 +54,13 @@ def threshold_calc_G():
     print times[..., 1] < times[..., 0]
 
 
-def threshold_m_dot():
-    """Compare CPU vs m_dot vs mv_dot performance (can use this to set the
-    shortcut thresholds in m_dot)."""
+def threshold_dot():
+    """Compare CPU vs GPU dot vs mv_dot performance (can use this to set the
+    shortcut thresholds in GPU dot)."""
 
-    vec_size = 2 ** np.arange(10)
+    # TODO: redo this for cublas
+
+    vec_size = 2 ** np.arange(11)
     reps = 100
     times = np.zeros((len(vec_size), len(vec_size), len(vec_size), 3))
     for i, a0 in enumerate(vec_size):
@@ -75,7 +81,7 @@ def threshold_m_dot():
                 out_gpu = gpuarray.to_gpu(out)
 
                 for _ in range(reps):
-                    hf.gpu.m_dot(a_gpu, b_gpu, out=out_gpu, shortcut=False)
+                    hf.gpu.dot(a_gpu, b_gpu, out=out_gpu)
                 out_gpu.get(out)
                 times[i, j, k, 1] = time.time() - start
 
@@ -84,32 +90,32 @@ def threshold_m_dot():
                 del out_gpu
                 pycuda.autoinit.context.synchronize()
 
-#                 b = np.ascontiguousarray(b.T)
-                start = time.time()
-                a_gpu = gpuarray.to_gpu(a)
-                b_gpu = gpuarray.to_gpu(b)
-                out_gpu = gpuarray.to_gpu(out)
-
-                for _ in range(reps):
-                    hf.gpu.mv_dot(a_gpu, b_gpu, out=out_gpu,
-                                  batch_a=False, batch_v=b1 > 1,
-                                  transpose_v=False)  # b1 > 1)
-                out_gpu.get(out)
-
-                times[i, j, k, 2] = time.time() - start
-
-                del a_gpu
-                del b_gpu
-                del out_gpu
-                pycuda.autoinit.context.synchronize()
+# #                 b = np.ascontiguousarray(b.T)
+#                 start = time.time()
+#                 a_gpu = gpuarray.to_gpu(a)
+#                 b_gpu = gpuarray.to_gpu(b)
+#                 out_gpu = gpuarray.to_gpu(out)
+#
+#                 for _ in range(reps):
+#                     hf.gpu.mv_dot(a_gpu, b_gpu, out=out_gpu,
+#                                   batch_a=False, batch_v=b1 > 1,
+#                                   transpose_v=False)  # b1 > 1)
+#                 out_gpu.get(out)
+#
+#                 times[i, j, k, 2] = time.time() - start
+#
+#                 del a_gpu
+#                 del b_gpu
+#                 del out_gpu
+#                 pycuda.autoinit.context.synchronize()
 
                 print "a0", a0, "a1", a1, "b1", b1, "times", times[i, j, k]
 
-    print "m_dot vs cpu"
+    print "gpu vs cpu dot"
     print times[..., 1] - times[..., 0]
     print times[..., 1] < times[..., 0]
 
-    print "m_dot vs mv_dot"
+    print "gpu dot vs mv_dot"
     print times[..., 1] - times[..., 2]
     print times[..., 1] < times[..., 2]
 
@@ -187,7 +193,7 @@ def profile_rnn_calc_G(cprofile=True):
         pycuda.driver.stop_profiler()
 
 
-def profile_m_dot(cprofile=True):
+def profile_dot(cprofile=True):
     N = 1024
     a = np.random.randn(N, N).astype(np.float32)
     b = np.random.randn(N, N).astype(np.float32)
@@ -197,7 +203,7 @@ def profile_m_dot(cprofile=True):
 
     for _ in range(2):
         # run it a few times to get rid of any startup overhead
-        hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu)
+        hf.gpu.dot(a_gpu, b_gpu, out=c_gpu)
 
     if cprofile:
         start = time.time()
@@ -209,8 +215,8 @@ def profile_m_dot(cprofile=True):
         pycuda.driver.start_profiler()
 
     for _ in range(100):
-        hf.gpu.m_dot(a_gpu, b_gpu, out=c_gpu, transpose_a=True,
-                     transpose_b=True, shortcut=True)
+        hf.gpu.dot(a_gpu, b_gpu, out=c_gpu, transpose_a=True,
+                   transpose_b=True)
     c_gpu.get()
 
     if cprofile:
