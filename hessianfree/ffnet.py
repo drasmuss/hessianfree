@@ -47,6 +47,7 @@ class FFNet(object):
         self.shape = shape
         self.n_layers = len(shape)
         self.dtype = np.float64 if debug else np.float32
+        self._optimizer = None
 
         self.epoch = None
         # note: this isn't used internally, it is just here so that an

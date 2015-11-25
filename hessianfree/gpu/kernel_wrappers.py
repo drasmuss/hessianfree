@@ -1,12 +1,11 @@
 import copy
+from functools import wraps
 
 import numpy as np
 from pycuda import gpuarray, driver
-from skcuda import cublas
-from skcuda import misc
+from skcuda import cublas, misc
 
 import hessianfree as hf
-from functools import wraps
 
 misc.init()
 
@@ -55,7 +54,7 @@ def debug_wrapper(cpu_func, debug=False):
             if debug:
                 try:
                     tmp = out_gpu.get()
-                    assert np.allclose(tmp.ravel(), out_cpu.ravel(), atol=1e-5)
+                    assert np.allclose(tmp.ravel(), out_cpu.ravel(), rtol=1e-4)
                 except AssertionError:
                     print np.max(np.abs(out_cpu - tmp))
                     print "gpu"
@@ -73,29 +72,29 @@ def debug_wrapper(cpu_func, debug=False):
 def cpu_dot(a, b, out=None, transpose_a=False, transpose_b=False,
             increment=False):
     result = np.dot(a.T if transpose_a else a, b.T if transpose_b else b)
-    if increment:
-        return result + out
-    return result
+
+    return result + out * increment
 
 
 def cpu_sum_cols(a, out=None, increment=False):
     result = np.sum(a, axis=0)
-    if increment:
-        return result + out
-    return result
+
+    return result + out * increment
 
 
 def cpu_J_dot(J, v, transpose_J=False, out=None, increment=False):
-        if J.ndim == 2:
-            result = J * v
-        else:
-            if transpose_J:
-                J = np.transpose(J, (0, 2, 1))
-            result = np.einsum("ijk,ik->ij", J, v)
+    if J.ndim == 2:
+        result = J * v
+    else:
+        if transpose_J:
+            J = np.transpose(J, (0, 2, 1))
+        result = np.einsum("ijk,ik->ij", J, v)
 
-        if increment:
-            return result + out
-        return result
+    return result + out * increment
+
+
+def cpu_multiply(a, b, out=None, increment=False):
+    return a * b + out * increment
 
 
 # @debug_wrapper(cpu_dot, debug=True)
@@ -149,24 +148,42 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False):
         a1, a0 = J.shape[1:]
     else:
         a0, a1 = J.shape[1:]
+
     # note: all the transposes are swapped because cublas assumes column-major
     # ordering
-    transJ = "n" if transpose_J else "t"
     lda = a0 if transpose_J else a1
     beta = np.float32(1.0) if increment else np.float32(0.0)
 
     if out is None:
         out = gpuarray.zeros((J.shape[0], a1), dtype=np.float32)
 
-    streams = [driver.Stream() for _ in range(J.shape[0])]
-    for i in range(J.shape[0]):
-        # TODO: double check that these are running concurrently
-        cublas.cublasSetStream(misc._global_cublas_handle, streams[i].handle)
-        cublas.cublasSgemv(misc._global_cublas_handle, transJ, a1, a0,
-                           np.float32(1.0), J[i].gpudata, lda, v[i].gpudata, 1,
-                           beta, out[i].gpudata, 1)
+    # concurrent gemv approach (this seems to be slower than batched)
+#     transJ = "n" if transpose_J else "t"
+#     streams = [driver.Stream() for _ in range(J.shape[0])]
+#     for i in range(J.shape[0]):
+#         cublas.cublasSetStream(misc._global_cublas_handle, streams[i].handle)
+#         cublas.cublasSgemv(misc._global_cublas_handle, transJ, a1, a0,
+#                            np.float32(1.0), J[i].gpudata, lda, v[i].gpudata, 1,
+#                            beta, out[i].gpudata, 1)
+#
+#     cublas.cublasSetStream(misc._global_cublas_handle, 0)
 
-    cublas.cublasSetStream(misc._global_cublas_handle, 0)
+    # batched gemm approach
+    transJ = "t" if transpose_J else "n"
+    J_data = gpuarray.arange(np.int64(J.gpudata),
+                             np.int64(J.gpudata) + 4 * a0 * a1 * J.shape[0],
+                             4 * a0 * a1, dtype=np.int64)
+    v_data = gpuarray.arange(np.int64(v.gpudata),
+                             np.int64(v.gpudata) + 4 * a1 * v.shape[0],
+                             4 * a1, dtype=np.int64)
+    out_data = gpuarray.arange(np.int64(out.gpudata),
+                               np.int64(out.gpudata) + 4 * a0 * out.shape[0],
+                               4 * a0, dtype=np.int64)
+
+    cublas.cublasSgemmBatched(
+        misc._global_cublas_handle, "n", transJ, 1, a0, a1,
+        np.float32(1.0), v_data.gpudata, 1, J_data.gpudata, lda,
+        beta, out_data.gpudata, 1, J.shape[0])
 
     return out
 
@@ -204,14 +221,17 @@ def iadd(a, b):
     return a
 
 
+# @debug_wrapper(cpu_multiply, True)
 def multiply(a, b, out=None, increment=False):
     assert a.size == b.size
 
     if out is None:
         out = gpuarray.zeros(a.shape, dtype=np.float32)
 
+    block_size = min(128, a.size)
     gpu_multiply = hf.gpu.kernels.get_function("multiply")
     gpu_multiply(a, b, out, np.int32(a.size), np.int32(increment),
-                 block=(32, 1, 1), grid=(a.size / 32 + (a.size % 32 != 0), 1))
+                 block=(block_size, 1, 1),
+                 grid=(a.size / block_size + (a.size % block_size != 0), 1))
 
     return out

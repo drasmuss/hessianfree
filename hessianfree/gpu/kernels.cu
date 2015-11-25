@@ -89,7 +89,7 @@ __global__ void multiply(float *A, float *B, float *out, const int size,
     // TODO: would it be faster to have each thread compute a couple entries?
     const int index = blockDim.x*blockIdx.x + threadIdx.x;
     
-    if (index > size)
+    if (index >= size)
         return;
     
     if (increment)

@@ -577,46 +577,45 @@ class RNNet(hf.FFNet):
 
         for s in range(sig_len):
             for l in range(self.n_layers):
+                R_act = R_activations[l][s]
                 # input from feedforward connections
                 if l > 0:
                     for pre in self.back_conns[l]:
                         vw, vb = self.get_weights(GPU_v, (pre, l))
                         Ww, _ = self.get_weights(self.GPU_W, (pre, l))
 
-                        hf.gpu.dot(self.GPU_activations[pre][s], vw,
-                                   out=R_activations[l][s], increment=True)
-                        hf.gpu.iadd(R_activations[l][s], vb)
-                        hf.gpu.dot(R_activations[pre][s], Ww,
-                                   out=R_activations[l][s], increment=True)
+                        hf.gpu.dot(self.GPU_activations[pre][s], vw, out=R_act,
+                                   increment=True)
+                        hf.gpu.iadd(R_act, vb)
+                        hf.gpu.dot(R_activations[pre][s], Ww, out=R_act,
+                                   increment=True)
 
                 # recurrent input
                 if self.rec_layers[l]:
                     if s == 0:
                         # bias input on first step
-                        hf.gpu.iadd(R_activations[l][s], v_recs[l][1])
+                        hf.gpu.iadd(R_act, v_recs[l][1])
                     else:
                         hf.gpu.dot(self.GPU_activations[l][s - 1],
-                                   v_recs[l][0], out=R_activations[l][s],
-                                   increment=True)
+                                   v_recs[l][0], out=R_act, increment=True)
                         hf.gpu.dot(R_activations[l][s - 1], W_recs[l][0],
-                                   out=R_activations[l][s], increment=True)
+                                   out=R_act, increment=True)
 
                 if not self.layers[l].stateful:
                     # note: this requires a memory allocation if d_activations
                     # is non-diagonal
-                    hf.gpu.J_dot(self.GPU_d_activations[l][s],
-                                 R_activations[l][s],
-                                 out=R_activations[l][s])
+                    hf.gpu.J_dot(self.GPU_d_activations[l][s], R_act,
+                                 out=R_act)
                 else:
                     d_input = self.GPU_d_activations[l][s, 0]
                     d_state = self.GPU_d_activations[l][s, 1]
                     d_output = self.GPU_d_activations[l][s, 2]
 
                     hf.gpu.J_dot(d_state, R_states[l], out=R_states[l])
-                    hf.gpu.J_dot(d_input, R_activations[l][s], out=R_states[l],
+                    hf.gpu.J_dot(d_input, R_act, out=R_states[l],
                                  increment=True)
                     hf.gpu.J_dot(d_output, R_states[l],
-                                 out=R_activations[l][s])
+                                 out=R_act)
 
         # R backward pass
         if self.truncation is None:
