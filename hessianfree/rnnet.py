@@ -574,48 +574,56 @@ class RNNet(hf.FFNet):
                   for l in range(self.n_layers)]
         W_recs = [self.get_weights(self.GPU_W, (l, l))
                   for l in range(self.n_layers)]
+        Gv_recs = [self.get_weights(Gv, (l, l))
+                   for l in range(self.n_layers)]
+        v_ff = dict([(conn, self.get_weights(GPU_v, conn))
+                     for conn in self.offsets])
+        W_ff = dict([(conn, self.get_weights(self.GPU_W, conn))
+                     for conn in self.offsets])
+        Gv_ff = dict([(conn, self.get_weights(Gv, conn))
+                     for conn in self.offsets])
 
         for s in range(sig_len):
-            for l in range(self.n_layers):
-                R_act = R_activations[l][s]
-                # input from feedforward connections
-                if l > 0:
-                    for pre in self.back_conns[l]:
-                        vw, vb = self.get_weights(GPU_v, (pre, l))
-                        Ww, _ = self.get_weights(self.GPU_W, (pre, l))
+            R_act = [R_activations[l][s] for l in range(self.n_layers)]
 
-                        hf.gpu.dot(self.GPU_activations[pre][s], vw, out=R_act,
-                                   increment=True)
-                        hf.gpu.iadd(R_act, vb)
-                        hf.gpu.dot(R_activations[pre][s], Ww, out=R_act,
-                                   increment=True)
+            # input from feedforward connections
+            for l in range(self.n_layers):
+                for pre in self.back_conns[l]:
+                    vw, vb = v_ff[(pre, l)]
+                    hf.gpu.dot(self.GPU_activations[pre][s], vw,
+                               out=R_act[l], increment=True)
+                    hf.gpu.iadd(R_act[l], vb)
+
+                for pre in self.back_conns[l]:
+                    hf.gpu.dot(R_act[pre], W_ff[(pre, l)][0], out=R_act[l],
+                               increment=True)
 
                 # recurrent input
                 if self.rec_layers[l]:
                     if s == 0:
                         # bias input on first step
-                        hf.gpu.iadd(R_act, v_recs[l][1])
+                        hf.gpu.iadd(R_act[l], v_recs[l][1])
                     else:
                         hf.gpu.dot(self.GPU_activations[l][s - 1],
-                                   v_recs[l][0], out=R_act, increment=True)
+                                   v_recs[l][0], out=R_act[l], increment=True)
                         hf.gpu.dot(R_activations[l][s - 1], W_recs[l][0],
-                                   out=R_act, increment=True)
+                                   out=R_act[l], increment=True)
 
                 if not self.layers[l].stateful:
-                    # note: this requires a memory allocation if d_activations
-                    # is non-diagonal
-                    hf.gpu.J_dot(self.GPU_d_activations[l][s], R_act,
-                                 out=R_act)
+                    if not isinstance(self.layers[l], hf.nl.Linear):
+                        # note: this requires a memory allocation if
+                        # d_activations is non-diagonal
+                        hf.gpu.J_dot(self.GPU_d_activations[l][s], R_act[l],
+                                     out=R_act[l])
                 else:
                     d_input = self.GPU_d_activations[l][s, 0]
                     d_state = self.GPU_d_activations[l][s, 1]
                     d_output = self.GPU_d_activations[l][s, 2]
 
                     hf.gpu.J_dot(d_state, R_states[l], out=R_states[l])
-                    hf.gpu.J_dot(d_input, R_act, out=R_states[l],
+                    hf.gpu.J_dot(d_input, R_act[l], out=R_states[l],
                                  increment=True)
-                    hf.gpu.J_dot(d_output, R_states[l],
-                                 out=R_act)
+                    hf.gpu.J_dot(d_output, R_states[l], out=R_act[l])
 
         # R backward pass
         if self.truncation is None:
@@ -623,8 +631,6 @@ class RNNet(hf.FFNet):
         else:
             trunc_per, trunc_len = self.truncation
 
-        # I don't think we can get away without allocating both of these (or
-        # allocating something for the R_activations*d2_loss multiply)
         R_error = self.GPU_errors
         R_deltas = self.GPU_deltas
 
@@ -648,15 +654,14 @@ class RNNet(hf.FFNet):
 
                     # error from feedforward connections
                     for post in self.conns[l]:
-                        W, _ = self.get_weights(self.GPU_W, (l, post))
+                        W, _ = W_ff[(l, post)]
                         hf.gpu.dot(R_deltas[post], W, out=R_error[l],
                                    transpose_b=True, increment=True)
 
                         # feedforward gradient
-                        W_g, b_g = self.get_weights(Gv, (l, post))
-                        hf.gpu.dot(self.GPU_activations[l][s],
-                                   R_deltas[post], out=W_g, transpose_a=True,
-                                   increment=True)
+                        W_g, b_g = Gv_ff[(l, post)]
+                        hf.gpu.dot(self.GPU_activations[l][s], R_deltas[post],
+                                   out=W_g, transpose_a=True, increment=True)
                         hf.gpu.sum_cols(R_deltas[post], out=b_g,
                                         increment=True)
 
@@ -693,13 +698,12 @@ class RNNet(hf.FFNet):
 
                     # recurrent gradient
                     if self.rec_layers[l]:
-                        W_g, b_g = self.get_weights(Gv, (l, l))
                         if s > 0:
                             hf.gpu.dot(self.GPU_activations[l][s - 1],
-                                       R_deltas[l], out=W_g, transpose_a=True,
-                                       increment=True)
+                                       R_deltas[l], out=Gv_recs[l][0],
+                                       transpose_a=True, increment=True)
                         else:
-                            hf.gpu.sum_cols(R_deltas[l], out=b_g,
+                            hf.gpu.sum_cols(R_deltas[l], out=Gv_recs[l][1],
                                             increment=True)
 
         Gv /= batch_size

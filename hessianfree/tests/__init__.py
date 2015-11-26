@@ -1,9 +1,10 @@
 try:
     import pycuda
-    pycuda_installed = True
+    import skcuda
+    gpu_enabled = True
 except ImportError:
-    pycuda_installed = False
+    gpu_enabled = False
 
 use_GPU = [False]
-if pycuda_installed:
+if gpu_enabled:
     use_GPU += [True]

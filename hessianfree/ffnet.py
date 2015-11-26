@@ -103,9 +103,10 @@ class FFNet(object):
                     raise ValueError("Can only connect from lower to higher "
                                      "layers (%s >= %s)" % (pre, post))
 
-        # add empty connection for last layer (just helps smooth the code
+        # add empty connection for first/last layer (just helps smooth the code
         # elsewhere)
         self.conns[self.n_layers - 1] = []
+        self.back_conns[0] = []
 
         # compute indices for the different connection weight matrices in the
         # overall parameter vector
@@ -135,15 +136,12 @@ class FFNet(object):
         # initialize GPU
         if use_GPU:
             try:
-                import pycuda.autoinit
+                import pycuda
+                import skcuda
             except Exception, e:
                 print e
-                raise ImportError("PyCuda not installed, or no compatible "
-                                  "device detected. Set use_GPU=False.")
-
-            dev = pycuda.autoinit.device
-            print "GPU found, using %s %s" % (dev.name(),
-                                              dev.compute_capability())
+                raise ImportError("PyCuda/scikit-cuda not installed. "
+                                  "Set use_GPU=False.")
 
     def run_batches(self, inputs, targets, optimizer,
                     max_epochs=1000, batch_size=None, test=None,
@@ -602,9 +600,9 @@ class FFNet(object):
                            out=R_error[i], increment=True)
 
                 hf.gpu.dot(self.GPU_activations[i], R_error[post],
-                           transpose_a=True, out=W_g)  # Gv[offset:W_end])
+                           transpose_a=True, out=W_g)
 
-                hf.gpu.sum_cols(R_error[post], out=b_g)  # Gv[W_end:b_end])
+                hf.gpu.sum_cols(R_error[post], out=b_g)
 
             hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
                          out=R_error[i], transpose_J=True)
@@ -747,7 +745,6 @@ class FFNet(object):
                     for pre in self.conns
                     for post in self.conns[pre]]
         self.offsets = {}
-        self.weights = {}
         offset = 0
         for pre in self.conns:
             for post in self.conns[pre]:
@@ -766,21 +763,10 @@ class FFNet(object):
         if conn not in self.offsets:
             return None
 
-        if params is self.W and conn in self.weights:
-            return self.weights[conn]
-
         offset, W_end, b_end = self.offsets[conn]
         W = params[offset:W_end]
         b = params[W_end:b_end]
-
-        result = (W.reshape((self.shape[conn[0]], self.shape[conn[1]])),
-                  b)
-
-        # cache references to the reshaped weights
-        if params is self.W:
-            self.weights[conn] = result
-
-        return result
+        return (W.reshape((self.shape[conn[0]], self.shape[conn[1]])), b)
 
     def init_loss(self, loss_type):
         if isinstance(loss_type, (list, tuple)):
