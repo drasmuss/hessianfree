@@ -348,38 +348,43 @@ class RNNet(hf.FFNet):
                   for l in range(self.n_layers)]
         W_recs = [self.get_weights(self.W, (l, l))
                   for l in range(self.n_layers)]
+        Gv_recs = [self.get_weights(Gv, (l, l))
+                   for l in range(self.n_layers)]
+        v_ff = dict([(conn, self.get_weights(v, conn))
+                     for conn in self.offsets])
+        W_ff = dict([(conn, self.get_weights(self.W, conn))
+                     for conn in self.offsets])
+        Gv_ff = dict([(conn, self.get_weights(Gv, conn))
+                     for conn in self.offsets])
 
         for s in range(sig_len):
             for l in range(self.n_layers):
-                # input from feedforward connections
-                if l > 0:
-                    for pre in self.back_conns[l]:
-                        vw, vb = self.get_weights(v, (pre, l))
-                        Ww, _ = self.get_weights(self.W, (pre, l))
+                R_act = R_activations[l][:, s]
 
-                        R_activations[l][:, s] += np.dot(
-                            self.activations[pre][:, s], vw, out=tmp_act[l])
-                        R_activations[l][:, s] += vb
-                        R_activations[l][:, s] += np.dot(
-                            R_activations[pre][:, s], Ww, out=tmp_act[l])
+                # input from feedforward connections
+                for pre in self.back_conns[l]:
+                    vw, vb = v_ff[(pre, l)]
+                    Ww, _ = W_ff[(pre, l)]
+
+                    R_act += np.dot(self.activations[pre][:, s], vw,
+                                    out=tmp_act[l])
+                    R_act += vb
+                    R_act += np.dot(R_activations[pre][:, s], Ww,
+                                    out=tmp_act[l])
 
                 # recurrent input
                 if self.rec_layers[l]:
                     if s == 0:
                         # bias input on first step
-                        R_activations[l][:, s] += v_recs[l][1]
+                        R_act += v_recs[l][1]
                     else:
-                        R_activations[l][:, s] += np.dot(
-                            self.activations[l][:, s - 1], v_recs[l][0],
-                            out=tmp_act[l])
-                        R_activations[l][:, s] += np.dot(
-                            R_activations[l][:, s - 1], W_recs[l][0],
-                            out=tmp_act[l])
+                        R_act += np.dot(self.activations[l][:, s - 1],
+                                        v_recs[l][0], out=tmp_act[l])
+                        R_act += np.dot(R_activations[l][:, s - 1],
+                                        W_recs[l][0], out=tmp_act[l])
 
                 if not self.layers[l].stateful:
-                    self.J_dot(self.d_activations[l][:, s],
-                               R_activations[l][:, s],
-                               out=R_activations[l][:, s])
+                    self.J_dot(self.d_activations[l][:, s], R_act, out=R_act)
                 else:
                     d_input = self.d_activations[l][:, s, ..., 0]
                     d_state = self.d_activations[l][:, s, ..., 1]
@@ -387,10 +392,8 @@ class RNNet(hf.FFNet):
 
                     R_states[l] = self.J_dot(d_state, R_states[l])
 
-                    R_states[l] += self.J_dot(d_input, R_activations[l][:, s],
-                                              out=tmp_act[l])
-                    self.J_dot(d_output, R_states[l],
-                               out=R_activations[l][:, s])
+                    R_states[l] += self.J_dot(d_input, R_act, out=tmp_act[l])
+                    self.J_dot(d_output, R_states[l], out=R_act)
 
         # R backward pass
         if self.truncation is None:
@@ -422,12 +425,12 @@ class RNNet(hf.FFNet):
 
                     # error from feedforward connections
                     for post in self.conns[l]:
-                        W, _ = self.get_weights(self.W, (l, post))
-                        R_error[l] += np.dot(R_deltas[post], W.T,
+                        R_error[l] += np.dot(R_deltas[post],
+                                             W_ff[(l, post)][0].T,
                                              out=tmp_act[l])
 
                         # feedforward gradient
-                        W_g, b_g = self.get_weights(Gv, (l, post))
+                        W_g, b_g = Gv_ff[(l, post)]
                         W_tmp_grad, b_tmp_grad = self.get_weights(tmp_grad,
                                                                   (l, post))
                         W_g += np.dot(self.activations[l][:, s].T,
@@ -468,7 +471,7 @@ class RNNet(hf.FFNet):
 
                     # recurrent gradient
                     if self.rec_layers[l]:
-                        W_g, b_g = self.get_weights(Gv, (l, l))
+                        W_g, b_g = Gv_recs[l]
                         W_tmp_grad, b_tmp_grad = self.get_weights(tmp_grad,
                                                                   (l, l))
                         if s > 0:
@@ -593,8 +596,6 @@ class RNNet(hf.FFNet):
                     hf.gpu.dot(self.GPU_activations[pre][s], vw,
                                out=R_act[l], increment=True)
                     hf.gpu.iadd(R_act[l], vb)
-
-                for pre in self.back_conns[l]:
                     hf.gpu.dot(R_act[pre], W_ff[(pre, l)][0], out=R_act[l],
                                increment=True)
 

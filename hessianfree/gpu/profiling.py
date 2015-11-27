@@ -331,10 +331,11 @@ def profile_plant(cprofile=True):
     rnn.optimizer = hf.opt.HessianFree()
     rnn.cache_minibatch(plant, None, batch_size=None)
 
-    v = gpuarray.to_gpu(np.random.randn(rnn.W.size).astype(np.float32))
+    v = np.random.randn(rnn.W.size).astype(np.float32)
+    v_gpu = gpuarray.to_gpu(v)
 
     for _ in range(5):
-        rnn.GPU_calc_G(v)
+        rnn.GPU_calc_G(v_gpu)
 
     if cprofile:
         start = time.time()
@@ -346,7 +347,7 @@ def profile_plant(cprofile=True):
         pycuda.driver.start_profiler()
 
     for _ in range(20):
-        out = rnn.GPU_calc_G(v)
+        out = rnn.GPU_calc_G(v_gpu)
 
     out.get()
 
