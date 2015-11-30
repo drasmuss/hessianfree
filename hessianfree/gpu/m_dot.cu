@@ -1,6 +1,6 @@
-__global__ void shared_m_dot_%transpose_a%_%transpose_b%(
-        float *A, float *B, float *C, const int a0, const int a1, const int b1, 
-        const int increment)
+__global__ void shared_m_dot_%floattype%_%transpose_a%_%transpose_b%(
+        %floattype% *A, %floattype% *B, %floattype% *C, const int a0, 
+        const int a1, const int b1, const int increment)
 {
     // multiplying an [a0,a1] matrix by an [a1,b1] matrix. each thread will
     // compute one element of c, which is a[i,:] * b[:,j].  however, we can
@@ -93,7 +93,7 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
 
     // c will accumulate the value of c[i,j] across tiles
     const int C_off = a_i*b1 + b_j;
-    float c = 0;
+    %floattype% c = 0;
 
     /*
     if (a_i == 1 && b_j == 1)
@@ -118,8 +118,9 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
     // note: we add an extra column (which will just be zero) so that
     // when we are writing data in by column the writes are all offset,
     // reducing bank conflicts
-    extern __shared__ float A_tile[];
-    float* B_tile = A_tile + (tile_len+1)*blockDim.y;
+    extern __shared__ float shared_data[];
+    %floattype%* A_tile = (%floattype%*)shared_data;
+    %floattype%* B_tile = A_tile + (tile_len+1)*blockDim.y;
     
     // loop over the tiles
     // tile_i and tile_j point to the top left corner of the A/B tiles
@@ -201,8 +202,9 @@ __global__ void shared_m_dot_%transpose_a%_%transpose_b%(
 }
 
 
-__global__ void small_m_dot_%transpose_a%_%transpose_b%(
-        float *A, float *B, float *out, int a0, int a1, int b1, int increment)
+__global__ void small_m_dot_%floattype%_%transpose_a%_%transpose_b%(
+        %floattype% *A, %floattype% *B, %floattype% *out, int a0, int a1, 
+        int b1, int increment)
 {
     // matrix multiplication for the case when A and B are small, e.g. 1xN
     // (in this case the normal m_dot can be inefficient because big sections 
@@ -213,8 +215,9 @@ __global__ void small_m_dot_%transpose_a%_%transpose_b%(
     const int A_grid = blockIdx.x*A_size;
     
     // load A and B into shared memory
-    extern __shared__ float A_share[];
-    float* B_share = A_share + A_size;
+    extern __shared__ float shared_data[];
+    %floattype%* A_share = (%floattype%*)shared_data;
+    %floattype%* B_share = A_share + A_size;
     
     // TODO: get the grid offset to work if A is transposed?
     
@@ -314,7 +317,7 @@ __global__ void small_m_dot_%transpose_a%_%transpose_b%(
         #endif
         
         
-        float c=0;
+        %floattype% c=0;
         for (int i=0; i < a1; i++)
         {
             c += A_share[A_off] * B_share[B_off];
@@ -330,9 +333,9 @@ __global__ void small_m_dot_%transpose_a%_%transpose_b%(
 }
 
 
-__global__ void mv_dot_%transpose_a%_%transpose_b%(
-        float *A, float *v, float *out, const int batch_a, const int batch_v, 
-        const int a0, const int a1, const int increment, 
+__global__ void mv_dot_%floattype%_%transpose_a%_%transpose_b%(
+        %floattype% *A, %floattype% *v, %floattype% *out, const int batch_a, 
+        const int batch_v, const int a0, const int a1, const int increment, 
         const int transpose_out)
 {
     // matrix-vector product
@@ -356,8 +359,8 @@ __global__ void mv_dot_%transpose_a%_%transpose_b%(
         out += blockIdx.y * a0;
         
     
-    __shared__ float data[1056];
-    __shared__ float v_share[32];
+    __shared__ %floattype% data[1056];
+    __shared__ %floattype% v_share[32];
     
     #if %transpose_a%
         const int start = dim_j*blockIdx.x;
@@ -379,7 +382,7 @@ __global__ void mv_dot_%transpose_a%_%transpose_b%(
         const int block_offset = t_i*a1 + t_j;
     #endif
     
-    float sum = 0;
+    %floattype% sum = 0;
     int block_index = start + block_offset;
     for (int i=0; i < a1; i+=step)
     {

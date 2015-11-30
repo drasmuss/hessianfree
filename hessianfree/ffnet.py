@@ -12,6 +12,7 @@ of the 27th International Conference on Machine Learning.
 from collections import defaultdict, OrderedDict
 from copy import deepcopy
 import pickle
+import warnings
 
 import numpy as np
 
@@ -42,17 +43,16 @@ class FFNet(object):
         # TODO: have each network keep its own rng, rather than using
         # the default np.random
 
-        self.use_GPU = use_GPU
         self.debug = debug
         self.shape = shape
         self.n_layers = len(shape)
         self.dtype = np.float64 if debug else np.float32
         self._optimizer = None
 
-        self.epoch = None
         # note: this isn't used internally, it is just here so that an
         # external process with a handle to this object can tell what epoch
         # it is on
+        self.epoch = None
 
         self.inputs = None
         self.targets = None
@@ -142,6 +142,7 @@ class FFNet(object):
                 print e
                 raise ImportError("PyCuda/scikit-cuda not installed. "
                                   "Set use_GPU=False.")
+        self.use_GPU = use_GPU
 
     def run_batches(self, inputs, targets, optimizer,
                     max_epochs=1000, batch_size=None, test=None,
@@ -199,8 +200,6 @@ class FFNet(object):
                 raise ValueError("Target dimension (%d) does not match number "
                                  "of output nodes (%d)" %
                                  (self.targets.shape[-1], self.shape[-1]))
-            if not(self.inputs.dtype == self.targets.dtype == np.float32):
-                raise TypeError("Input type must be np.float32")
 
             assert self.activations[-1].dtype == self.dtype
             assert np.all([np.all(np.isfinite(a)) for a in self.activations])
@@ -290,11 +289,15 @@ class FFNet(object):
             inputs.shape[0] = batch_size
             self.activations, self.d_activations = self.forward(inputs, self.W,
                                                                 deriv=True)
-            self.inputs = np.asarray(inputs.get_inputs(), dtype=np.float32)
-            self.targets = np.asarray(inputs.get_targets(), dtype=np.float32)
+            self.inputs = inputs.get_inputs()
+            self.targets = inputs.get_targets()
 
-        # cast to self.dtype (since nonlinearities are not guaranteed
-        # to return the same dtype)
+        # cast to self.dtype
+        if self.inputs.dtype != self.dtype:
+            warnings.warn("Input dtype (%s) not equal to self.dtype (%s)" %
+                          (self.inputs.dtype, self.dtype))
+        self.inputs = np.asarray(self.inputs, dtype=self.dtype)
+        self.targets = np.asarray(self.targets, dtype=self.dtype)
         self.activations = [np.asarray(a, dtype=self.dtype)
                             for a in self.activations]
         self.d_activations = [np.asarray(a, dtype=self.dtype)
@@ -307,18 +310,15 @@ class FFNet(object):
 
         if self.use_GPU:
             from pycuda import gpuarray
-            self.GPU_activations = [
-                gpuarray.to_gpu(np.asarray(a, dtype=np.float32))
-                for a in self.activations]
-            self.GPU_d_activations = [
-                gpuarray.to_gpu(np.asarray(a, dtype=np.float32))
-                for a in self.d_activations]
-            self.GPU_W = gpuarray.to_gpu(np.asarray(self.W, dtype=np.float32))
-            self.GPU_d2_loss = [
-                gpuarray.to_gpu(np.asarray(a, dtype=np.float32))
-                if a is not None else None
-                for a in self.loss.d2_loss(self.activations, self.targets)]
-            self.GPU_tmp_space = [gpuarray.empty(a.shape, np.float32)
+            self.GPU_activations = [gpuarray.to_gpu(a)
+                                    for a in self.activations]
+            self.GPU_d_activations = [gpuarray.to_gpu(a)
+                                      for a in self.d_activations]
+            self.GPU_W = gpuarray.to_gpu(self.W)
+            self.GPU_d2_loss = [gpuarray.to_gpu(a) if a is not None else None
+                                for a in self.loss.d2_loss(self.activations,
+                                                           self.targets)]
+            self.GPU_tmp_space = [gpuarray.empty(a.shape, self.dtype)
                                   for a in self.activations]
 
     def forward(self, input, params, deriv=False):
@@ -474,7 +474,7 @@ class FFNet(object):
         """Check gradient via finite differences (for debugging)."""
 
         eps = 1e-6
-        grad = np.zeros(calc_grad.shape)
+        grad = np.zeros_like(calc_grad)
         inc_W = np.zeros_like(self.W)
         for i in range(len(self.W)):
             inc_W[i] = eps
@@ -556,14 +556,14 @@ class FFNet(object):
         from pycuda import gpuarray
 
         if out is None or not isinstance(out, gpuarray.GPUArray):
-            Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
+            Gv = gpuarray.zeros(self.W.shape, self.dtype)
         else:
             Gv = out
             Gv.fill(0)
 
         # TODO: remove this if we stop using this function outside the GPU CG
         if not isinstance(v, gpuarray.GPUArray):
-            GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
+            GPU_v = gpuarray.to_gpu(v)
         else:
             GPU_v = v
 
@@ -638,7 +638,7 @@ class FFNet(object):
 
         # compute the Jacobian
         J = [None for _ in self.layers]
-        inc_i = np.zeros(N)
+        inc_i = np.zeros_like(self.W)
         for i in range(N):
             inc_i[i] = eps
 
@@ -796,8 +796,8 @@ class FFNet(object):
                                  "with cross-entropy error")
             if (isinstance(t, hf.loss_funcs.CrossEntropy) and
                     not isinstance(self.layers[-1], hf.nl.Softmax)):
-                print ("Softmax should probably be used with cross-entropy "
-                       "error")
+                warnings.warn("Softmax should probably be used with "
+                              "cross-entropy error")
 
         if isinstance(loss_type, (list, tuple)):
             self.loss = hf.loss_funcs.LossSet(loss_type)

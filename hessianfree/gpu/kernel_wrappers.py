@@ -10,26 +10,6 @@ import hessianfree as hf
 misc.init()
 
 
-def find_block_len(n_threads, threads_per, vec_len):
-    # need to divide n_threads into blocks of size n*threads_per. we
-    # want n to be as large as possible, so we use all the threads in
-    # a block. but vec_len also needs to be evenly divisible by n (I
-    # don't think it's possible to have different sized blocks in
-    # different grid cells). so we want the highest factor of vec_len
-    # that is <= n_threads/threads_per.
-    start = int(n_threads / threads_per)
-
-    if start >= vec_len:
-        return np.asscalar(vec_len)
-
-    mid = int(np.sqrt(vec_len))
-    for n in range(start, 0 if start < mid else mid - 1, -1):
-        if vec_len % n == 0:
-            return n
-
-    return 1
-
-
 def debug_wrapper(cpu_func, debug=False):
     """Decorator used to specify a CPU function used to verify the output of
     a GPU function."""
@@ -103,6 +83,8 @@ def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
 
     assert not increment or out is not None
 
+    dtype = a.dtype
+
     if transpose_a:
         a1, a0 = a.shape
     else:
@@ -116,13 +98,15 @@ def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     assert a1 == b0
 
     if out is None:
-        out = gpuarray.zeros((a0, b1), dtype=np.float32)
+        out = gpuarray.zeros((a0, b1), dtype=dtype)
+
+    assert a.dtype == b.dtype == out.dtype
 
     # note: we swap the order of a and b and swap the transposes because
     # cublas assumes column-major ordering
     transa = "t" if transpose_a else "n"
     transb = "t" if transpose_b else "n"
-    beta = np.float32(1.0) if increment else np.float32(0.0)
+    beta = dtype.type(1.0) if increment else dtype.type(0.0)
     lda = a0 if transpose_a else a1
     ldb = b0 if transpose_b else b1
     ldout = b1
@@ -134,9 +118,14 @@ def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     else:
         cublas.cublasSetStream(misc._global_cublas_handle, stream.handle)
 
-    cublas.cublasSgemm(misc._global_cublas_handle, transb, transa, b1, a0, a1,
-                       np.float32(1.0), b.gpudata, ldb, a.gpudata, lda,
-                       beta, out.gpudata, ldout)
+    if dtype == np.float32:
+        gemm = cublas.cublasSgemm
+    else:
+        gemm = cublas.cublasDgemm
+
+    gemm(misc._global_cublas_handle, transb, transa, b1, a0, a1,
+         dtype.type(1.0), b.gpudata, ldb, a.gpudata, lda, beta, out.gpudata,
+         ldout)
 
     return out
 
@@ -146,10 +135,7 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
     if J.ndim == 2:
         return multiply(J, v, out=out, increment=increment, stream=stream)
 
-    if out is v:
-        # note: we allow out to be v in this function because it can be
-        # handled efficiently in the element-wise case
-        v = v.copy()
+    dtype = J.dtype
 
     if transpose_J:
         a1, a0 = J.shape[1:]
@@ -159,10 +145,16 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
     # note: all the transposes are swapped because cublas assumes column-major
     # ordering
     lda = a0 if transpose_J else a1
-    beta = np.float32(1.0) if increment else np.float32(0.0)
+    beta = dtype.type(1.0) if increment else dtype.type(0.0)
 
-    if out is None:
-        out = gpuarray.zeros((J.shape[0], a1), dtype=np.float32)
+    if out is v:
+        # note: we allow out to be v in this function because it can be
+        # handled efficiently in the element-wise case
+        v = v.copy()
+    elif out is None:
+        out = gpuarray.zeros((J.shape[0], a1), dtype=dtype)
+
+    assert J.dtype == v.dtype == out.dtype
 
     # concurrent gemv approach (this seems to be slower than batched)
 #     transJ = "n" if transpose_J else "t"
@@ -177,54 +169,67 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
 
     # batched gemm approach
     transJ = "t" if transpose_J else "n"
+    n = np.dtype(dtype).itemsize
     J_data = gpuarray.arange(np.int64(J.gpudata),
-                             np.int64(J.gpudata) + 4 * a0 * a1 * J.shape[0],
-                             4 * a0 * a1, dtype=np.int64, stream=stream)
+                             np.int64(J.gpudata) + n * a0 * a1 * J.shape[0],
+                             n * a0 * a1, dtype=np.int64, stream=stream)
     v_data = gpuarray.arange(np.int64(v.gpudata),
-                             np.int64(v.gpudata) + 4 * a1 * v.shape[0],
-                             4 * a1, dtype=np.int64, stream=stream)
+                             np.int64(v.gpudata) + n * a1 * v.shape[0],
+                             n * a1, dtype=np.int64, stream=stream)
     out_data = gpuarray.arange(np.int64(out.gpudata),
-                               np.int64(out.gpudata) + 4 * a0 * out.shape[0],
-                               4 * a0, dtype=np.int64, stream=stream)
+                               np.int64(out.gpudata) + n * a0 * out.shape[0],
+                               n * a0, dtype=np.int64, stream=stream)
 
     if stream is None:
         cublas.cublasSetStream(misc._global_cublas_handle, 0)
     else:
         cublas.cublasSetStream(misc._global_cublas_handle, stream.handle)
 
-    cublas.cublasSgemmBatched(
-        misc._global_cublas_handle, "n", transJ, 1, a0, a1,
-        np.float32(1.0), v_data.gpudata, 1, J_data.gpudata, lda,
-        beta, out_data.gpudata, 1, J.shape[0])
+    if dtype == np.float32:
+        gemmBatched = cublas.cublasSgemmBatched
+    else:
+        gemmBatched = cublas.cublasDgemmBatched
+
+    gemmBatched(misc._global_cublas_handle, "n", transJ, 1, a0, a1,
+                dtype.type(1.0), v_data.gpudata, 1, J_data.gpudata, lda,
+                beta, out_data.gpudata, 1, J.shape[0])
 
     return out
 
 
 # @debug_wrapper(cpu_sum_cols, debug=True)
 def sum_cols(a, out=None, increment=False, stream=None):
+    dtype = a.dtype
+
     if out is None:
-        out = gpuarray.empty(int(a.shape[1]), dtype=np.float32)
+        out = gpuarray.empty(int(a.shape[1]), dtype=dtype)
+
+    assert a.dtype == out.dtype
 
     block_x = min(32, a.shape[1])
     block_y = 32
 
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0), 1)
-    hf.gpu.sum_cols_kernel.prepared_async_call(
+    hf.gpu.sum_cols_kernel[dtype == np.float32].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
         a.gpudata, out.gpudata, np.int32(increment), np.int32(a.shape[0]),
-        np.int32(a.shape[1]), shared_size=block_x * block_y * 4)
+        np.int32(a.shape[1]),
+        shared_size=block_x * block_y * dtype.itemsize)
 
     return out
 
 
 # @debug_wrapper(lambda a, b: a + b, True)
 def iadd(a, b, stream=None):
+    dtype = a.dtype
+    assert a.dtype == b.dtype
+
     block_x = min(32, a.shape[1])
     block_y = min(32, a.shape[0])
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
             a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 
-    hf.gpu.iadd_kernel.prepared_async_call(
+    hf.gpu.iadd_kernel[dtype == np.float32].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
         a.gpudata, b.gpudata, np.int32(a.shape[0]), np.int32(a.shape[1]))
 
@@ -233,13 +238,16 @@ def iadd(a, b, stream=None):
 
 # @debug_wrapper(cpu_multiply, True)
 def multiply(a, b, out=None, increment=False, stream=None):
-    assert a.size == b.size
+    dtype = a.dtype
 
     if out is None:
-        out = gpuarray.zeros(a.shape, dtype=np.float32)
+        out = gpuarray.zeros(a.shape, dtype=dtype)
+
+    assert a.size == b.size
+    assert a.dtype == b.dtype == out.dtype
 
     block_size = min(128, a.size)
-    hf.gpu.multiply_kernel.prepared_async_call(
+    hf.gpu.multiply_kernel[dtype == np.float32].prepared_async_call(
         (a.size / block_size + (a.size % block_size != 0), 1),
         (block_size, 1, 1), stream,
         a.gpudata, b.gpudata, out.gpudata, np.int32(a.size),
@@ -263,6 +271,8 @@ def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
                       transpose_v=not transpose_a, batch_a=False, batch_v=True,
                       increment=increment, transpose_out=True)
 
+    dtype = a.dtype
+
     # note: these transposes don't actually rearrange anything in memory,
     # just changing the shape
     if transpose_a:
@@ -274,7 +284,9 @@ def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     assert out is None or (out is not a and out is not b)
 
     if out is None:
-        out = gpuarray.zeros((a.shape[0], b.shape[1]), dtype=np.float32)
+        out = gpuarray.zeros((a.shape[0], b.shape[1]), dtype=dtype)
+
+    assert a.dtype == b.dtype == out.dtype
 
     # note: the block is transposed from what you might think, so it's
     # (b_shape[1], a_shape[0]), because we want the x threads aligned with
@@ -283,11 +295,12 @@ def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     grid = (b.shape[1] / block_x + (b.shape[1] % block_x != 0),
             a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 
-    hf.gpu.m_dot_kernel[transpose_a][transpose_b].prepared_async_call(
+    hf.gpu.m_dot_kernel[dtype == np.float32
+                        ][transpose_a][transpose_b].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
         a.gpudata, b.gpudata, out.gpudata, np.int32(a.shape[0]),
         np.int32(a.shape[1]), np.int32(b.shape[1]), np.int32(increment),
-        shared_size=(block_x + 1) * block_y * 8)
+        shared_size=(block_x + 1) * block_y * 2 * dtype.itemsize)
 
     return out
 
@@ -295,6 +308,8 @@ def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
 def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
            transpose_out=False, batch_a=False, batch_v=False, increment=False,
            stream=None):
+
+    dtype = a.dtype
 
     # transpose_v only applies if v is batched
     assert not transpose_v or batch_v
@@ -321,12 +336,15 @@ def mv_dot(a, v, out=None, transpose_a=False, transpose_v=False,
             out_shape = (grid_y, a_shape[0])
         else:
             out_shape = (a_shape[0], grid_y)
-        out = gpuarray.empty(out_shape, dtype=np.float32)
+        out = gpuarray.empty(out_shape, dtype=dtype)
+
+    assert a.dtype == v.dtype == out.dtype
 
     block_x = block_y = 32
     grid = (a_shape[0] / block_x + (a_shape[0] % block_x != 0), grid_y)
 
-    hf.gpu.mv_dot_kernel[transpose_a][transpose_v].prepared_async_call(
+    hf.gpu.mv_dot_kernel[dtype == np.float32
+                         ][transpose_a][transpose_v].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
         a.gpudata, v.gpudata, out.gpudata, np.int32(batch_a),
         np.int32(batch_v), np.int32(a_shape[0]), np.int32(a_shape[1]),

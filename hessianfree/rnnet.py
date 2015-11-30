@@ -260,7 +260,7 @@ class RNNet(hf.FFNet):
         """Check gradient via finite differences (for debugging)."""
 
         eps = 1e-6
-        grad = np.zeros(calc_grad.shape)
+        grad = np.zeros_like(calc_grad)
 
         sig_len = self.inputs.shape[1]
         if self.truncation is None:
@@ -530,14 +530,14 @@ class RNNet(hf.FFNet):
             # pre-allocate calc_G arrays
             batch_size = self.inputs.shape[0]
             self.GPU_states = [gpuarray.empty((batch_size, self.shape[i]),
-                                              dtype=np.float32)
+                                              dtype=self.dtype)
                                if l.stateful else None
                                for i, l in enumerate(self.layers)]
             self.GPU_errors = [gpuarray.empty((batch_size, l),
-                                              dtype=np.float32)
+                                              dtype=self.dtype)
                                for l in self.shape]
             self.GPU_deltas = [gpuarray.empty((batch_size, l),
-                                              dtype=np.float32)
+                                              dtype=self.dtype)
                                for l in self.shape]
 
             # reshape tmp space (it's just empty space, so all we need to do
@@ -716,7 +716,7 @@ class RNNet(hf.FFNet):
             return Gv
         else:
             if out is not None:
-                out[...] = Gv.get(pagelocked=True)
+                Gv.get(out)
             else:
                 out = Gv.get(pagelocked=True)
 
@@ -746,7 +746,7 @@ class RNNet(hf.FFNet):
 
         # compute the Jacobian
         J = [None for _ in self.layers]
-        inc_i = np.zeros(N)
+        inc_i = np.zeros_like(self.W)
         for i in range(N):
             inc_i[i] = eps
 
@@ -779,7 +779,7 @@ class RNNet(hf.FFNet):
         else:
             trunc_per, trunc_len = self.truncation
 
-        G = np.zeros((len(self.W), len(self.W)))
+        G = np.zeros((len(self.W), len(self.W)), dtype=self.dtype)
 
         for n in range(trunc_per, sig_len + 1, trunc_per):
             start = np.maximum(n - trunc_len, 0)

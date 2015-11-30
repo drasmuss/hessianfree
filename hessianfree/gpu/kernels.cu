@@ -1,8 +1,9 @@
 #include <stdio.h>
 
 
-__global__ void sum_cols(float *A, float *out, const int increment,
-                         const int a0, const int a1)
+__global__ void sum_cols_%floattype%(%floattype% *A, %floattype% *out, 
+                                     const int increment,
+                                     const int a0, const int a1)
 {
     const int t_i = threadIdx.y;
     const int t_j = threadIdx.x;
@@ -12,12 +13,13 @@ __global__ void sum_cols(float *A, float *out, const int increment,
     const int A_offset = t_i*a1 + col;
     const int data_offset = t_i*dim_j + t_j;
     
-    extern __shared__ float data[];
+    extern __shared__ float shared_data[];
+    %floattype%* data = (%floattype%*)shared_data;
     
     // stage 1: loop threads across A to reduce to shared memory block
     const int step = dim_i*a1;
     const int limit = a0*a1;
-    float sum = 0;
+    %floattype% sum = 0;
     int index = A_offset;
     for (int i=0; i < limit; i += step)
     {
@@ -58,7 +60,8 @@ __global__ void sum_cols(float *A, float *out, const int increment,
 } 
 
 
-__global__ void iadd(float *A, float *v, const int a0, const int a1)
+__global__ void iadd_%floattype%(%floattype% *A, %floattype% *v, 
+                                 const int a0, const int a1)
 {
     // in-place addition with broadcasting along first axis
     // (adding vector v to matrix A)
@@ -70,7 +73,7 @@ __global__ void iadd(float *A, float *v, const int a0, const int a1)
         return;
     
     // load the appropriate part of v for this block into shared memory 
-    __shared__ float v_share[32];
+    __shared__ %floattype% v_share[32];
         
     if (threadIdx.y == 0)
         v_share[threadIdx.x] = v[col];
@@ -83,8 +86,9 @@ __global__ void iadd(float *A, float *v, const int a0, const int a1)
 }
 
 
-__global__ void multiply(float *A, float *B, float *out, const int size,
-                         const int increment)
+__global__ void multiply_%floattype%(%floattype% *A, %floattype% *B, 
+                                     %floattype% *out, 
+                                     const int size, const int increment)
 {
     // TODO: would it be faster to have each thread compute a couple entries?
     const int index = blockDim.x*blockIdx.x + threadIdx.x;
