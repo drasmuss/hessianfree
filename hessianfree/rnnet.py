@@ -221,23 +221,19 @@ class RNNet(hf.FFNet):
                     # compute deltas
                     if not self.layers[l].stateful:
                         self.J_dot(self.d_activations[l][:, s], error[l],
-                                   transpose=True, out=deltas[l])
+                                   transpose_J=True, out=deltas[l])
                     else:
                         d_input = self.d_activations[l][:, s, ..., 0]
                         d_state = self.d_activations[l][:, s, ..., 1]
                         d_output = self.d_activations[l][:, s, ..., 2]
 
                         state_deltas[l] += self.J_dot(d_output, error[l],
-                                                      transpose=True,
+                                                      transpose_J=True,
                                                       out=tmp_act[l])
-                        self.J_dot(d_input, state_deltas[l], transpose=True,
+                        self.J_dot(d_input, state_deltas[l], transpose_J=True,
                                    out=deltas[l])
-
-                        # note: this can't be done in-place, because
-                        # state_deltas is both an input and output (outputs
-                        # get set to zero before the operation)
-                        state_deltas[l] = self.J_dot(d_state, state_deltas[l],
-                                                     transpose=True)
+                        self.J_dot(d_state, state_deltas[l], transpose_J=True,
+                                   out=state_deltas[l])
 
                     # gradient for recurrent weights
                     if self.rec_layers[l]:
@@ -326,7 +322,7 @@ class RNNet(hf.FFNet):
             Gv = np.zeros(self.W.size, dtype=self.dtype)
         else:
             Gv = out
-            Gv[...] = 0
+            Gv.fill(0)
 
         batch_size = self.inputs.shape[0]
         sig_len = self.inputs.shape[1]
@@ -342,7 +338,7 @@ class RNNet(hf.FFNet):
                     for i, l in enumerate(self.layers)]
         R_activations = self.tmp_space
         for a in R_activations:
-            a[...] = 0
+            a.fill(0)
 
         v_recs = [self.get_weights(v, (l, l))
                   for l in range(self.n_layers)]
@@ -408,20 +404,18 @@ class RNNet(hf.FFNet):
 
         for n in range(trunc_per - 1, sig_len, trunc_per):
             for i in range(self.n_layers):
-                R_deltas[i][...] = 0
+                R_deltas[i].fill(0)
                 if R_states[i] is not None:
-                    R_states[i][...] = 0
+                    R_states[i].fill(0)
 
             for s in range(n, np.maximum(n - trunc_len, -1), -1):
-                error = self.loss.d2_loss([a[:, s] for a in self.activations],
-                                          self.targets[:, s])
-
                 for l in range(self.n_layers - 1, -1, -1):
-                    if error[l] is not None:
-                        R_error[l][...] = error[l]
-                        R_error[l] *= R_activations[l][:, s]
+                    if self.d2_loss[l] is not None:
+                        np.multiply(self.d2_loss[l][:, s],
+                                    R_activations[l][:, s],
+                                    out=R_error[l])
                     else:
-                        R_error[l][...] = 0
+                        R_error[l].fill(0)
 
                     # error from feedforward connections
                     for post in self.conns[l]:
@@ -445,19 +439,19 @@ class RNNet(hf.FFNet):
                     # compute deltas
                     if not self.layers[l].stateful:
                         self.J_dot(self.d_activations[l][:, s], R_error[l],
-                                   transpose=True, out=R_deltas[l])
+                                   transpose_J=True, out=R_deltas[l])
                     else:
                         d_input = self.d_activations[l][:, s, ..., 0]
                         d_state = self.d_activations[l][:, s, ..., 1]
                         d_output = self.d_activations[l][:, s, ..., 2]
 
                         R_states[l] += self.J_dot(d_output, R_error[l],
-                                                  transpose=True,
+                                                  transpose_J=True,
                                                   out=tmp_act[l])
-                        self.J_dot(d_input, R_states[l], transpose=True,
+                        self.J_dot(d_input, R_states[l], transpose_J=True,
                                    out=R_deltas[l])
-                        R_states[l] = self.J_dot(d_state, R_states[l],
-                                                 transpose=True)
+                        self.J_dot(d_state, R_states[l], transpose_J=True,
+                                   out=R_states[l])
 
                     # apply structural damping
                     struc_damping = getattr(self.optimizer, "struc_damping",
@@ -486,65 +480,44 @@ class RNNet(hf.FFNet):
 
         return Gv
 
-    def cache_minibatch(self, inputs, targets, batch_size=None):
-        super(RNNet, self).cache_minibatch(inputs, targets, batch_size)
+    def load_GPU_data(self):
+        from pycuda import gpuarray
 
-        if self.use_GPU:
-            from pycuda import gpuarray
-            # rearrange cached GPU data so that signal is the first axis (so
-            # that each time step is a single block of memory in GPU_calc_G)
-            # TODO: swap around the default data shape so that we don't have
-            # to do this
-            for i, a in enumerate(self.GPU_activations):
-                tmp = gpuarray.empty((a.shape[1], a.shape[0], a.shape[2]),
-                                     np.float32)
-                for s in range(a.shape[1]):
-                    tmp[s] = a[:, s]
+        self.GPU_W = gpuarray.to_gpu(self.W)
 
-                self.GPU_activations[i] = tmp
+        # rearrange GPU data so that signal is the first axis (so
+        # that each time step is a single block of memory in GPU_calc_G)
+        self.GPU_activations = [
+            gpuarray.to_gpu(np.ascontiguousarray(np.swapaxes(a, 0, 1)))
+            for a in self.activations]
 
-            for i, a in enumerate(self.GPU_d_activations):
-                if not self.layers[i].stateful:
-                    tmp = gpuarray.empty([a.shape[1], a.shape[0]] +
-                                         list(a.shape[2:]), np.float32)
-                    for s in range(a.shape[1]):
-                        tmp[s] = a[:, s]
-                else:
-                    tmp = gpuarray.empty([a.shape[1], 3, a.shape[0]] +
-                                         list(a.shape[2:-1]), np.float32)
-                    for s in range(a.shape[1]):
-                        for j in range(3):
-                            tmp[s, j] = a[:, s, ..., j]
+        self.GPU_d_activations = [
+            gpuarray.to_gpu(np.ascontiguousarray(np.rollaxis(np.swapaxes(a, 0,
+                                                                         1),
+                                                             - 1, 1)))
+            if self.layers[i].stateful else
+            gpuarray.to_gpu(np.ascontiguousarray(np.swapaxes(a, 0, 1)))
+            for i, a in enumerate(self.d_activations)]
 
-                self.GPU_d_activations[i] = tmp
+        self.GPU_d2_loss = [
+            gpuarray.to_gpu(np.ascontiguousarray(np.swapaxes(a, 0, 1)))
+            if a is not None else None for a in self.d2_loss]
 
-            for i, a in enumerate(self.GPU_d2_loss):
-                if a is not None:
-                    tmp = gpuarray.empty((a.shape[1], a.shape[0], a.shape[2]),
-                                         np.float32)
-                    for s in range(a.shape[1]):
-                        tmp[s] = a[:, s]
+        self.GPU_tmp_space = [gpuarray.empty_like(a)
+                              for a in self.GPU_activations]
 
-                    self.GPU_d2_loss[i] = tmp
-
-            # pre-allocate calc_G arrays
-            batch_size = self.inputs.shape[0]
-            self.GPU_states = [gpuarray.empty((batch_size, self.shape[i]),
-                                              dtype=self.dtype)
-                               if l.stateful else None
-                               for i, l in enumerate(self.layers)]
-            self.GPU_errors = [gpuarray.empty((batch_size, l),
-                                              dtype=self.dtype)
-                               for l in self.shape]
-            self.GPU_deltas = [gpuarray.empty((batch_size, l),
-                                              dtype=self.dtype)
-                               for l in self.shape]
-
-            # reshape tmp space (it's just empty space, so all we need to do
-            # is change the shape)
-            for i, a in enumerate(self.GPU_tmp_space):
-                self.GPU_tmp_space[i] = a.reshape((a.shape[1], a.shape[0],
-                                                   a.shape[2]))
+        # pre-allocate calc_G arrays
+        batch_size = self.inputs.shape[0]
+        self.GPU_states = [gpuarray.empty((batch_size, self.shape[i]),
+                                          dtype=self.dtype)
+                           if l.stateful else None
+                           for i, l in enumerate(self.layers)]
+        self.GPU_errors = [gpuarray.empty((batch_size, l),
+                                          dtype=self.dtype)
+                           for l in self.shape]
+        self.GPU_deltas = [gpuarray.empty((batch_size, l),
+                                          dtype=self.dtype)
+                           for l in self.shape]
 
     def GPU_calc_G(self, v, damping=0, out=None):
         """Compute Gauss-Newton matrix-vector product."""
@@ -552,13 +525,13 @@ class RNNet(hf.FFNet):
         from pycuda import gpuarray
 
         if out is None or not isinstance(out, gpuarray.GPUArray):
-            Gv = gpuarray.zeros(self.W.size, dtype=np.float32)
+            Gv = gpuarray.zeros(self.W.shape, dtype=self.dtype)
         else:
             Gv = out
             Gv.fill(0)
 
         if not isinstance(v, gpuarray.GPUArray):
-            GPU_v = gpuarray.to_gpu(np.asarray(v, dtype=np.float32))
+            GPU_v = gpuarray.to_gpu(v)
         else:
             GPU_v = v
 
@@ -589,8 +562,8 @@ class RNNet(hf.FFNet):
         for s in range(sig_len):
             R_act = [R_activations[l][s] for l in range(self.n_layers)]
 
-            # input from feedforward connections
             for l in range(self.n_layers):
+                # input from feedforward connections
                 for pre in self.back_conns[l]:
                     vw, vb = v_ff[(pre, l)]
                     hf.gpu.dot(self.GPU_activations[pre][s], vw,
@@ -634,10 +607,6 @@ class RNNet(hf.FFNet):
 
         R_error = self.GPU_errors
         R_deltas = self.GPU_deltas
-
-        # note: we can't reuse R_activations for R_error here due to the
-        # truncation (we don't want to override R_activations with error
-        # values partway through the forward pass)
 
         for n in range(trunc_per - 1, sig_len, trunc_per):
             for i in range(self.n_layers):
@@ -715,12 +684,7 @@ class RNNet(hf.FFNet):
         if isinstance(v, gpuarray.GPUArray):
             return Gv
         else:
-            if out is not None:
-                Gv.get(out)
-            else:
-                out = Gv.get(pagelocked=True)
-
-            return out
+            return Gv.get(out, pagelocked=True)
 
     def check_J(self, start=0, stop=None):
         """Compute the Jacobian of the network via finite differences."""

@@ -78,6 +78,32 @@ def test_continuous(use_GPU):
     assert rnn.loss.batch_loss(outputs, targets) < 1e-4
 
 
+def test_asym_dact(use_GPU):
+    class Roll(hf.nl.Nonlinearity):
+        def activation(self, x):
+            return np.roll(x, 1, axis=-1)
+
+        def d_activation(self, x, _):
+            d_act = np.roll(np.eye(x.shape[-1], dtype=x.dtype), 1, axis=0)
+            return np.resize(d_act, np.concatenate((x.shape[:-1],
+                                                    d_act.shape)))
+
+    n_inputs = 3
+    sig_len = 5
+
+    inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                      np.ones(sig_len))[:, :, None]
+    targets = np.outer(np.linspace(0.1, 0.9, n_inputs),
+                       np.linspace(0, 1, sig_len))[:, :, None]
+    inputs = inputs.astype(np.float32)
+    targets = targets.astype(np.float32)
+
+    rnn = hf.RNNet(shape=[1, 5, 1], layers=Roll(), debug=True, use_GPU=use_GPU)
+
+    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                    max_epochs=30, print_period=None)
+
+
 def test_plant(use_GPU):
     np.random.seed(0)
     n_inputs = 10

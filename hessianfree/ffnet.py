@@ -302,6 +302,7 @@ class FFNet(object):
                             for a in self.activations]
         self.d_activations = [np.asarray(a, dtype=self.dtype)
                               for a in self.d_activations]
+        self.d2_loss = self.loss.d2_loss(self.activations, self.targets)
 
         # allocate temporary space for intermediate values, to save on
         # memory allocations
@@ -309,17 +310,23 @@ class FFNet(object):
                           for a in self.activations]
 
         if self.use_GPU:
-            from pycuda import gpuarray
-            self.GPU_activations = [gpuarray.to_gpu(a)
-                                    for a in self.activations]
-            self.GPU_d_activations = [gpuarray.to_gpu(a)
-                                      for a in self.d_activations]
-            self.GPU_W = gpuarray.to_gpu(self.W)
-            self.GPU_d2_loss = [gpuarray.to_gpu(a) if a is not None else None
-                                for a in self.loss.d2_loss(self.activations,
-                                                           self.targets)]
-            self.GPU_tmp_space = [gpuarray.empty(a.shape, self.dtype)
-                                  for a in self.activations]
+            # TODO: we could just allocate these on the first timestep and
+            # then do a copy rather than an allocation after that, if that
+            # makes a difference
+            self.load_GPU_data()
+
+    def load_GPU_data(self):
+        from pycuda import gpuarray
+
+        self.GPU_activations = [gpuarray.to_gpu(a)
+                                for a in self.activations]
+        self.GPU_d_activations = [gpuarray.to_gpu(a)
+                                  for a in self.d_activations]
+        self.GPU_W = gpuarray.to_gpu(self.W)
+        self.GPU_d2_loss = [gpuarray.to_gpu(a) if a is not None else None
+                            for a in self.d2_loss]
+        self.GPU_tmp_space = [gpuarray.empty(a.shape, self.dtype)
+                              for a in self.activations]
 
     def forward(self, input, params, deriv=False):
         """Compute layer activations for given input and parameters.
@@ -396,7 +403,7 @@ class FFNet(object):
 
         return error
 
-    def J_dot(self, J, vec, transpose=False, out=None):
+    def J_dot(self, J, vec, transpose_J=False, out=None):
         """Compute the product of a Jacobian and some vector."""
 
         # In many cases the Jacobian is a diagonal matrix, so it is more
@@ -406,17 +413,13 @@ class FFNet(object):
         if J.ndim == 2:
             # note: the first dimension is the batch, so ndim==2 means
             # this is a vector representation
-
             if out is None:
-                out = J * vec
-            elif out is vec:
-                out *= J
+                # passing out=None fails for some reason
+                return np.multiply(J, vec)
             else:
-                out[...] = vec
-                out *= J
-            return out
+                return np.multiply(J, vec, out=out)
         else:
-            if transpose:
+            if transpose_J:
                 J = np.transpose(J, (0, 2, 1))
 
             if out is None:
@@ -463,7 +466,7 @@ class FFNet(object):
                 np.dot(self.activations[i].T, deltas[post], out=W_grad)
                 np.sum(deltas[post], axis=0, out=b_grad)
 
-            self.J_dot(self.d_activations[i], error[i],
+            self.J_dot(self.d_activations[i], error[i], transpose_J=True,
                        out=deltas[i])
 
         grad /= self.inputs.shape[0]
@@ -504,7 +507,7 @@ class FFNet(object):
             Gv = np.zeros(self.W.size, dtype=self.dtype)
         else:
             Gv = out
-            Gv[...] = 0
+            Gv.fill(0)
 
         # R forward pass
         R_activations = [np.zeros_like(a) for a in self.activations]
@@ -523,15 +526,14 @@ class FFNet(object):
                        out=R_activations[i])
 
         # backward pass
-        error = self.loss.d2_loss(self.activations, self.targets)
         R_error = R_activations
 
         for i in range(self.n_layers - 1, -1, -1):
-            if error[i] is not None:
+            if self.d2_loss[i] is not None:
                 # note: R_error[i] is already set to R_activations[i]
-                R_error[i] *= error[i]
+                R_error[i] *= self.d2_loss[i]
             else:
-                R_error[i][...] = 0
+                R_error[i].fill(0)
 
             for post in self.conns[i]:
                 W, _ = self.get_weights(self.W, (i, post))
@@ -544,7 +546,7 @@ class FFNet(object):
                 np.sum(R_error[post], axis=0, out=b_g)
 
             self.J_dot(self.d_activations[i], R_error[i],
-                       out=R_error[i], transpose=True)
+                       out=R_error[i], transpose_J=True)
 
         Gv /= len(self.inputs)
 
@@ -568,25 +570,21 @@ class FFNet(object):
             GPU_v = v
 
         # R forward pass
-
-        # note: both of these just point to tmp_space, just keeping the
-        # different variables here for consistency with calc_G
-        R_input = self.GPU_tmp_space
-        R_activations = R_input
+        R_activations = self.GPU_tmp_space
 
         for i in range(self.n_layers):
-            R_input[i].fill(0)
+            R_activations[i].fill(0)
             for pre in self.back_conns[i]:
                 vw, vb = self.get_weights(GPU_v, (pre, i))
                 Ww, _ = self.get_weights(self.GPU_W, (pre, i))
 
                 hf.gpu.dot(self.GPU_activations[pre], vw,
-                           out=R_input[i], increment=True)
-                hf.gpu.iadd(R_input[i], vb)
+                           out=R_activations[i], increment=True)
+                hf.gpu.iadd(R_activations[i], vb)
                 hf.gpu.dot(R_activations[pre], Ww,
-                           out=R_input[i], increment=True)
+                           out=R_activations[i], increment=True)
 
-            hf.gpu.J_dot(self.GPU_d_activations[i], R_input[i],
+            hf.gpu.J_dot(self.GPU_d_activations[i], R_activations[i],
                          out=R_activations[i])
 
         # backward pass
@@ -623,12 +621,7 @@ class FFNet(object):
         if isinstance(v, gpuarray.GPUArray):
             return Gv
         else:
-            if out is not None:
-                out[...] = Gv.get(pagelocked=True)
-            else:
-                out = Gv.get(pagelocked=True)
-
-            return out
+            return Gv.get(out, pagelocked=True)
 
     def check_J(self):
         """Compute the Jacobian of the network via finite differences."""
