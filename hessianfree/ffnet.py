@@ -293,6 +293,13 @@ class FFNet(object):
             self.inputs = np.asarray(inputs.get_inputs(), dtype=np.float32)
             self.targets = np.asarray(inputs.get_targets(), dtype=np.float32)
 
+        # cast to self.dtype (since nonlinearities are not guaranteed
+        # to return the same dtype)
+        self.activations = [np.asarray(a, dtype=self.dtype)
+                            for a in self.activations]
+        self.d_activations = [np.asarray(a, dtype=self.dtype)
+                              for a in self.d_activations]
+
         # allocate temporary space for intermediate values, to save on
         # memory allocations
         self.tmp_space = [np.zeros(a.shape, self.dtype)

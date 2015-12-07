@@ -34,9 +34,9 @@ def debug_wrapper(cpu_func, debug=False):
     """Decorator used to specify a CPU function used to verify the output of
     a GPU function."""
 
-    def debug_func(gpu_func):
+    def debug_func_parametrized(gpu_func):
         @wraps(gpu_func)
-        def wrapped_func(*args, **kwargs):
+        def debug_func(*args, **kwargs):
             if debug:
                 cpu_args = list(args)
                 for i, a in enumerate(cpu_args):
@@ -65,8 +65,8 @@ def debug_wrapper(cpu_func, debug=False):
                     print tmp / out_cpu
                     raise
             return out_gpu
-        return wrapped_func
-    return debug_func
+        return debug_func
+    return debug_func_parametrized
 
 
 def cpu_dot(a, b, out=None, transpose_a=False, transpose_b=False,

@@ -2,12 +2,11 @@ import hessianfree as hf
 import numpy as np
 import pytest
 
-from hessianfree.tests import gpu_enabled
-if gpu_enabled:
+if hf.gpu_enabled:
     from hessianfree.gpu import dot
     from pycuda import gpuarray
 
-pytestmark = pytest.mark.skipif(not gpu_enabled,
+pytestmark = pytest.mark.skipif(not hf.gpu_enabled,
                                 reason="GPU packages not installed")
 
 

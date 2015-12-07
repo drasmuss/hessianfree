@@ -81,7 +81,7 @@ class Softmax(Nonlinearity):
         return e
 
     def d_activation(self, _, a):
-        return a[..., None, :] * (np.eye(a.shape[-1], dtype=np.float32) -
+        return a[..., None, :] * (np.eye(a.shape[-1], dtype=a.dtype) -
                                   a[..., None])
 
 
@@ -149,7 +149,7 @@ class Continuous(Nonlinearity):
 
         # note: need to create a new array each time (since other things
         # might be holding a reference to d_act)
-        d_act = np.zeros((x.shape[0], x.shape[1], 3), dtype=np.float32)
+        d_act = np.zeros((x.shape[0], x.shape[1], 3), dtype=x.dtype)
 
         # derivative of state with respect to input
         d_act[:, :, 0] = self.coeff
