@@ -31,6 +31,9 @@ def threshold_calc_G():
 
             v = np.random.randn(ff.W.size).astype(np.float32)
 
+            for _ in range(5):
+                ff.calc_G(v)
+
             start = time.time()
             for _ in range(reps):
                 ff.calc_G(v)
@@ -40,6 +43,9 @@ def threshold_calc_G():
             ff.cache_minibatch(inputs, targets)
 
             v = gpuarray.to_gpu(v)
+
+            for _ in range(5):
+                ff.GPU_calc_G(v)
 
             start = time.time()
             for _ in range(reps):
@@ -54,70 +60,53 @@ def threshold_calc_G():
     print times[..., 1] < times[..., 0]
 
 
-def threshold_dot():
-    """Compare CPU vs GPU dot vs mv_dot performance (can use this to set the
-    shortcut thresholds in GPU dot)."""
+def threshold_rnn_calc_G():
+    """Compare partial/full GPU vs CPU performance (can use this to determine
+    at what point it is useful to run things on the GPU)."""
 
-    # TODO: redo this for cublas
-
-    vec_size = [1] + range(128, 1025, 128)
+    batch_size = 1024
+    layer_size = [1] + range(32, 129, 32)
+    sig_len = [1] + range(8, 33, 8)
     reps = 100
-    times = np.zeros((len(vec_size), len(vec_size), len(vec_size), 3))
-    for i, a0 in enumerate(vec_size):
-        for j, a1 in enumerate(vec_size):
-            a = np.random.randn(a0, a1).astype(np.float32)
-            for k, b1 in enumerate(vec_size):
-                b = np.random.randn(a1, b1).astype(np.float32)
-                out = np.zeros((a0, b1), dtype=np.float32)
 
-                start = time.time()
-                for _ in range(reps):
-                    np.dot(a, b, out=out)
-                times[i, j, k, 0] = time.time() - start
+    times = np.zeros((len(sig_len), len(layer_size), 2))
+    for i, b in enumerate(sig_len):
+        inputs = np.random.randn(batch_size, b, 1).astype(np.float32)
+        targets = np.random.randn(batch_size, b, 1).astype(np.float32)
 
-                start = time.time()
-                a_gpu = gpuarray.to_gpu(a)
-                b_gpu = gpuarray.to_gpu(b)
-                out_gpu = gpuarray.to_gpu(out)
+        for j, n in enumerate(layer_size):
+            rnn = hf.RNNet([1, n, 1], use_GPU=False)
+            rnn.cache_minibatch(inputs, targets)
 
-                for _ in range(reps):
-                    hf.gpu.dot(a_gpu, b_gpu, out=out_gpu)
-                out_gpu.get(out)
-                times[i, j, k, 1] = time.time() - start
+            v = np.random.randn(rnn.W.size).astype(np.float32)
 
-                del a_gpu
-                del b_gpu
-                del out_gpu
-                pycuda.autoinit.context.synchronize()
+            for _ in range(5):
+                rnn.calc_G(v)
 
-# #                 b = np.ascontiguousarray(b.T)
-#                 start = time.time()
-#                 a_gpu = gpuarray.to_gpu(a)
-#                 b_gpu = gpuarray.to_gpu(b)
-#                 out_gpu = gpuarray.to_gpu(out)
-#
-#                 for _ in range(reps):
-#                     hf.gpu.mv_dot(a_gpu, b_gpu, out=out_gpu,
-#                                   batch_a=False, batch_v=b1 > 1,
-#                                   transpose_v=False)  # b1 > 1)
-#                 out_gpu.get(out)
-#
-#                 times[i, j, k, 2] = time.time() - start
-#
-#                 del a_gpu
-#                 del b_gpu
-#                 del out_gpu
-#                 pycuda.autoinit.context.synchronize()
+            start = time.time()
+            for _ in range(reps):
+                rnn.calc_G(v)
+            times[i, j, 0] = time.time() - start
 
-                print "a0", a0, "a1", a1, "b1", b1, "times", times[i, j, k]
+            rnn = hf.RNNet([1, n, 1], use_GPU=True)
+            rnn.cache_minibatch(inputs, targets)
 
-    print "gpu vs cpu dot"
+            v = gpuarray.to_gpu(v)
+
+            for _ in range(5):
+                rnn.GPU_calc_G(v)
+
+            start = time.time()
+            for _ in range(reps):
+                rnn.GPU_calc_G(v)
+
+            v = v.get()
+            times[i, j, 1] = time.time() - start
+
+            print "b", b, "n", n, "times", times[i, j]
+
     print times[..., 1] - times[..., 0]
     print times[..., 1] < times[..., 0]
-
-    print "gpu dot vs mv_dot"
-    print times[..., 1] - times[..., 2]
-    print times[..., 1] < times[..., 2]
 
 
 def profile_calc_G(cprofile=True):
