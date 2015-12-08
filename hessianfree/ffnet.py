@@ -609,8 +609,8 @@ class FFNet(object):
 
                 hf.gpu.sum_cols(R_error[post], out=b_g)
 
-            hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
-                         out=R_error[i], transpose_J=True)
+            hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i], out=R_error[i],
+                         transpose_J=True)
 
         Gv /= len(self.inputs)
 

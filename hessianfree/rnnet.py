@@ -508,8 +508,8 @@ class RNNet(hf.FFNet):
 
         # pre-allocate calc_G arrays
         batch_size = self.inputs.shape[0]
-        self.GPU_states = [gpuarray.empty((batch_size, self.shape[i]),
-                                          dtype=self.dtype)
+        self.GPU_states = [[gpuarray.empty((batch_size, self.shape[i]),
+                                           dtype=self.dtype) for _ in range(2)]
                            if l.stateful else None
                            for i, l in enumerate(self.layers)]
         self.GPU_errors = [gpuarray.empty((batch_size, l),
@@ -544,7 +544,7 @@ class RNNet(hf.FFNet):
         for i in range(self.n_layers):
             R_activations[i].fill(0)
             if R_states[i] is not None:
-                R_states[i].fill(0)
+                R_states[i][0].fill(0)
 
         v_recs = [self.get_weights(GPU_v, (l, l))
                   for l in range(self.n_layers)]
@@ -594,10 +594,14 @@ class RNNet(hf.FFNet):
                     d_state = self.GPU_d_activations[l][s, 1]
                     d_output = self.GPU_d_activations[l][s, 2]
 
-                    hf.gpu.J_dot(d_state, R_states[l], out=R_states[l])
-                    hf.gpu.J_dot(d_input, R_act[l], out=R_states[l],
+                    # note: we're doing this weird thing with two R_states
+                    # in order to avoid having to copy data
+                    i = s % 2
+                    hf.gpu.J_dot(d_state, R_states[l][i],
+                                 out=R_states[l][1 - i])
+                    hf.gpu.J_dot(d_input, R_act[l], out=R_states[l][1 - i],
                                  increment=True)
-                    hf.gpu.J_dot(d_output, R_states[l], out=R_act[l])
+                    hf.gpu.J_dot(d_output, R_states[l][1 - i], out=R_act[l])
 
         # R backward pass
         if self.truncation is None:
@@ -612,7 +616,7 @@ class RNNet(hf.FFNet):
             for i in range(self.n_layers):
                 R_deltas[i].fill(0)
                 if R_states[i] is not None:
-                    R_states[i].fill(0)
+                    R_states[i][n % 2].fill(0)
 
             for s in range(n, np.maximum(n - trunc_len, -1), -1):
                 for l in range(self.n_layers - 1, -1, -1):
@@ -649,12 +653,13 @@ class RNNet(hf.FFNet):
                         d_state = self.GPU_d_activations[l][s, 1]
                         d_output = self.GPU_d_activations[l][s, 2]
 
-                        hf.gpu.J_dot(d_output, R_error[l], out=R_states[l],
+                        i = s % 2
+                        hf.gpu.J_dot(d_output, R_error[l], out=R_states[l][i],
                                      increment=True, transpose_J=True)
-                        hf.gpu.J_dot(d_input, R_states[l], out=R_deltas[l],
+                        hf.gpu.J_dot(d_input, R_states[l][i], out=R_deltas[l],
                                      transpose_J=True)
-                        hf.gpu.J_dot(d_state, R_states[l], out=R_states[l],
-                                     transpose_J=True)
+                        hf.gpu.J_dot(d_state, R_states[l][i],
+                                     out=R_states[l][1 - i], transpose_J=True)
 
                     # apply structural damping
                     struc_damping = getattr(self.optimizer, "struc_damping",

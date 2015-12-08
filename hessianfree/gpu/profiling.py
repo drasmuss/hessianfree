@@ -232,8 +232,8 @@ def profile_dot(cprofile=True):
 
 def profile_plant(cprofile=True):
     np.random.seed(0)
-    n_inputs = 1024
-    sig_len = 128
+    n_inputs = 10
+    sig_len = 20
 
     class Plant(hf.nl.Nonlinearity):
         def __init__(self, A, B, targets, init_state):
@@ -346,10 +346,11 @@ def profile_plant(cprofile=True):
         pycuda.autoinit.context.synchronize()
         pycuda.driver.start_profiler()
 
-    for _ in range(20):
-        out = rnn.GPU_calc_G(v_gpu)
-
-    out.get()
+#     for _ in range(20):
+#         out = rnn.GPU_calc_G(v_gpu)
+#     out.get()
+    rnn.run_batches(plant, None, optimizer=hf.opt.HessianFree(CG_iter=30),
+                    max_epochs=10, plotting=False, print_period=None)
 
     if cprofile:
         p.disable()

@@ -1,5 +1,5 @@
-__global__ void shared_m_dot_%floattype%_%transpose_a%_%transpose_b%(
-        %floattype% *A, %floattype% *B, %floattype% *C, const int a0, 
+__global__ void shared_m_dot_%float_type%_%transpose_a%_%transpose_b%(
+        %float_type% *A, %float_type% *B, %float_type% *C, const int a0, 
         const int a1, const int b1, const int increment)
 {
     // multiplying an [a0,a1] matrix by an [a1,b1] matrix. each thread will
@@ -93,7 +93,7 @@ __global__ void shared_m_dot_%floattype%_%transpose_a%_%transpose_b%(
 
     // c will accumulate the value of c[i,j] across tiles
     const int C_off = a_i*b1 + b_j;
-    %floattype% c = 0;
+    %float_type% c = 0;
 
     /*
     if (a_i == 1 && b_j == 1)
@@ -119,8 +119,8 @@ __global__ void shared_m_dot_%floattype%_%transpose_a%_%transpose_b%(
     // when we are writing data in by column the writes are all offset,
     // reducing bank conflicts
     extern __shared__ float shared_data[];
-    %floattype%* A_tile = (%floattype%*)shared_data;
-    %floattype%* B_tile = A_tile + (tile_len+1)*blockDim.y;
+    %float_type%* A_tile = (%float_type%*)shared_data;
+    %float_type%* B_tile = A_tile + (tile_len+1)*blockDim.y;
     
     // loop over the tiles
     // tile_i and tile_j point to the top left corner of the A/B tiles
@@ -202,8 +202,8 @@ __global__ void shared_m_dot_%floattype%_%transpose_a%_%transpose_b%(
 }
 
 
-__global__ void small_m_dot_%floattype%_%transpose_a%_%transpose_b%(
-        %floattype% *A, %floattype% *B, %floattype% *out, int a0, int a1, 
+__global__ void small_m_dot_%float_type%_%transpose_a%_%transpose_b%(
+        %float_type% *A, %float_type% *B, %float_type% *out, int a0, int a1, 
         int b1, int increment)
 {
     // matrix multiplication for the case when A and B are small, e.g. 1xN
@@ -216,8 +216,8 @@ __global__ void small_m_dot_%floattype%_%transpose_a%_%transpose_b%(
     
     // load A and B into shared memory
     extern __shared__ float shared_data[];
-    %floattype%* A_share = (%floattype%*)shared_data;
-    %floattype%* B_share = A_share + A_size;
+    %float_type%* A_share = (%float_type%*)shared_data;
+    %float_type%* B_share = A_share + A_size;
     
     // TODO: get the grid offset to work if A is transposed?
     
@@ -317,7 +317,7 @@ __global__ void small_m_dot_%floattype%_%transpose_a%_%transpose_b%(
         #endif
         
         
-        %floattype% c=0;
+        %float_type% c=0;
         for (int i=0; i < a1; i++)
         {
             c += A_share[A_off] * B_share[B_off];
@@ -333,12 +333,11 @@ __global__ void small_m_dot_%floattype%_%transpose_a%_%transpose_b%(
 }
 
 
-__global__ void mv_dot_%floattype%_%transpose_a%_%transpose_b%(
-        %floattype% *A, %floattype% *v, %floattype% *out, const int batch_a, 
-        const int batch_v, const int a0, const int a1, const int increment, 
-        const int transpose_out)
+__global__ void mv_batched_%float_type%_%transpose_a%(
+        %float_type% *A, %float_type% *v, %float_type% *out, 
+        const int a0, const int a1, const int increment)
 {
-    // matrix-vector product
+    // batched matrix-vector product
     
     const int t_i = threadIdx.y;
     const int t_j = threadIdx.x;
@@ -346,21 +345,16 @@ __global__ void mv_dot_%floattype%_%transpose_a%_%transpose_b%(
     const int dim_j = blockDim.x;
     
     // note: right now this code assumes that dim_i == dim_j
-    // note: transpose_b is only used when there are batches, to indicate
-    // which way the batches are aligned
-    // TODO: batch_v will ruin the coalescing, is there any way around that?
+    // it also assumes that dim_i is evenly divisible by 2
     
     // batch offset
-    if (batch_a)
-        A += blockIdx.y * a0 * a1;
-    if (batch_v && %transpose_b%)
-        v += blockIdx.y * a1;
-    if (batch_a != transpose_out)
-        out += blockIdx.y * a0;
-        
+    A += blockIdx.y * a0 * a1;
+    v += blockIdx.y * a1;
+    out += blockIdx.y * a0;
     
-    __shared__ %floattype% data[1056];
-    __shared__ %floattype% v_share[32];
+    extern __shared__ float shared_data[];
+    %float_type%* data = (%float_type%*)shared_data;
+    %float_type%* v_share = data + dim_i*(dim_j+1);
     
     #if %transpose_a%
         const int start = dim_j*blockIdx.x;
@@ -382,17 +376,12 @@ __global__ void mv_dot_%floattype%_%transpose_a%_%transpose_b%(
         const int block_offset = t_i*a1 + t_j;
     #endif
     
-    %floattype% sum = 0;
+    %float_type% sum = 0;
     int block_index = start + block_offset;
     for (int i=0; i < a1; i+=step)
     {
-        if (t_i == 0 && i+t_j < a1)
-        {
-            if (batch_v && !%transpose_b%)
-                v_share[t_j] = v[(i+t_j)*gridDim.y + blockIdx.y];
-            else
-                v_share[t_j] = v[i + t_j];
-        }
+        if (t_i == 0 && i + t_j < a1)
+            v_share[t_j] = v[i + t_j];
         
         __syncthreads();
         
@@ -423,8 +412,8 @@ __global__ void mv_dot_%floattype%_%transpose_a%_%transpose_b%(
     */
     
     // stage 2: reduction within block
-    // note: we always order things in blocks such that we can do a column-wise
-    // reduction (to keep warps intact)
+    // note: we always order things in the block such that we can do a 
+    // column-wise reduction (to keep warps intact)
     const int out_offset = blockIdx.x*dim_j + t_j;
     if (out_offset >= a0)
         return;
@@ -447,22 +436,9 @@ __global__ void mv_dot_%floattype%_%transpose_a%_%transpose_b%(
         if (t_i < s)
             data[reduction_offset] += data[reduction_offset + s*(dim_j+1)];
     }
-    
-    if (t_i > 0)
-        return;
 
-    if ((batch_v && !batch_a) != transpose_out)
-    {
-        if (increment)
-            out[out_offset*gridDim.y + blockIdx.y] += data[t_j];
-        else
-            out[out_offset*gridDim.y + blockIdx.y] = data[t_j];
-    }
-    else
-    {
-        if (increment)
-            out[out_offset] += data[t_j];
-        else
-            out[out_offset] = data[t_j];
-    }
+    if (increment && t_i == 0)
+        out[out_offset] += data[t_j];
+    else if (t_i == 0)
+        out[out_offset] = data[t_j];
 }

@@ -2,7 +2,9 @@ import os
 
 import numpy as np
 import pycuda.autoinit
+import pycuda.driver
 from pycuda.compiler import SourceModule
+
 
 from hessianfree.gpu import kernel_wrappers
 from hessianfree.gpu.kernel_wrappers import iadd, sum_cols, multiply, J_dot
@@ -16,22 +18,28 @@ pycuda.autoinit.context.set_shared_config(
 
 DTYPES = ["double", "float"]
 
+streams = [pycuda.driver.Stream() for _ in range(16)]
+
 
 def parse_kernels():
     with open(os.path.join(os.path.dirname(__file__), "kernels.cu")) as f:
         code = f.read()
 
-    code = "\n".join([code.replace("%floattype%", t) for t in DTYPES])
-
     with open(os.path.join(os.path.dirname(__file__), "m_dot.cu")) as f:
-        m_dot = f.read()
+        code += "\n" + f.read()
 
-    m_dot = m_dot.replace("%tile_len%", "32")
-    m_dot = "\n".join([m_dot.replace("%floattype%", t) for t in DTYPES])
+    code = code.replace("%tile_len%", "32")
 
-    # create versions of the function with transpose hard-coded, so it can
-    # be compiled more efficiently
-    funcs = m_dot.split("__global__ void")
+    funcs = code.split("__global__ void")
+    new_funcs = []
+    for f in funcs:
+        if "%float_type%" in f:
+            for t in DTYPES:
+                new_funcs += [f.replace("%float_type%", t)]
+        else:
+            new_funcs += [f]
+
+    funcs = new_funcs
     new_funcs = []
     for f in funcs:
         if "%transpose_a%" in f:
@@ -49,12 +57,18 @@ def parse_kernels():
         else:
             new_funcs += [f]
 
-    code += "__global__ void".join(new_funcs)
+    code = "__global__ void".join(new_funcs)
 
     return code
 
+try:
+    kernels = SourceModule(parse_kernels())
+except pycuda.driver.CompileError:
+    with open("kernel_code.txt", "w") as f:
+        for i, line in enumerate(parse_kernels().split("\n")):
+            f.write("%03d %s\n" % (i, line))
 
-kernels = SourceModule(parse_kernels())
+    raise
 
 sum_cols_kernel = [kernels.get_function("sum_cols_%s" % dtype).prepare("PPiii")
                    for dtype in DTYPES]
@@ -66,7 +80,6 @@ m_dot_kernel = [[[kernels.get_function("shared_m_dot_%s_%s_%s" %
                                        (dtype, a, b)).prepare("PPPiiii")
                  for b in ["0", "1"]] for a in ["0", "1"]]
                 for dtype in DTYPES]
-mv_dot_kernel = [[[kernels.get_function("mv_dot_%s_%s_%s" %
-                                        (dtype, a, b)).prepare("PPPiiiiii")
-                  for b in ["0", "1"]] for a in ["0", "1"]]
-                 for dtype in DTYPES]
+mv_batched_kernel = [[kernels.get_function("mv_batched_%s_%s" %
+                                           (dtype, a)).prepare("PPPiii")
+                      for a in ["0", "1"]] for dtype in DTYPES]
