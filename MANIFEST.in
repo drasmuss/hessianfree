@@ -1,2 +1,3 @@
 global-include *.py
+global-include *.cu
 include *.rst
