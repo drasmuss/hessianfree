@@ -11,9 +11,6 @@ import hessianfree as hf
 misc.init()
 
 
-# TODO: pick block sizes more carefully
-
-
 def debug_wrapper(cpu_func, debug=False):
     """Decorator used to specify a CPU function used to verify the output of
     a GPU function."""
@@ -115,11 +112,9 @@ def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     ldb = b0 if transpose_b else b1
     ldout = b1
 
-    if stream is None:
-        # TODO: how much overhead is there in this? should we try to minimize
-        # the number of calls by checking if stream is already set?
-        cublas.cublasSetStream(misc._global_cublas_handle, 0)
-    else:
+    if stream is not None:
+        # note: this assumes that the stream is set to the default stream to
+        # start
         cublas.cublasSetStream(misc._global_cublas_handle, stream.handle)
 
     if dtype == np.float32:
@@ -130,6 +125,9 @@ def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     gemm(misc._global_cublas_handle, transb, transa, b1, a0, a1,
          dtype.type(1.0), b.gpudata, ldb, a.gpudata, lda, beta, out.gpudata,
          ldout)
+
+    if stream is not None:
+        cublas.cublasSetStream(misc._global_cublas_handle, 0)
 
     return out
 
@@ -151,7 +149,6 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
     elif out is v:
         # note: we allow out to be v in this function because it can be
         # handled efficiently in the element-wise case
-        warnings.warn("Copying v in J_dot")
         v = v.copy()
 
     assert J.dtype == v.dtype == out.dtype
@@ -196,7 +193,7 @@ def sum_cols(a, out=None, increment=False, stream=None):
 
     assert a.dtype == out.dtype
 
-    block_x = min(32, a.shape[1])
+    block_x = a._block[0] / 32
     block_y = 32
 
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0), 1)
@@ -214,8 +211,8 @@ def iadd(a, b, stream=None):
     dtype = a.dtype
     assert a.dtype == b.dtype
 
-    block_x = min(32, a.shape[1])
-    block_y = min(32, a.shape[0])
+    block_x = min(32, a.shape[0])
+    block_y = min(max(1, a._block[0] / block_x), a.shape[1])
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
             a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 

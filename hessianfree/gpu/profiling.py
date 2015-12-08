@@ -179,7 +179,7 @@ def profile_rnn_calc_G(cprofile=True):
     else:
         pycuda.driver.start_profiler()
 
-    for _ in range(20):
+    for _ in range(100):
         _ = rnn.GPU_calc_G(v)
 
     if cprofile:

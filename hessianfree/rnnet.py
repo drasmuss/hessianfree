@@ -480,6 +480,16 @@ class RNNet(hf.FFNet):
 
         return Gv
 
+    def split_axes(self, array, n=1):
+            # split a multidimensional array into a corresponding list of lists
+            # along the first n axes (this is used so that array.__getitem__
+            # isn't called repeatedly, as it is somewhat expensive for
+            # gpuarrays)
+            if n == 1:
+                return [a for a in array]
+
+            return [self.split_axes(a, n - 1) for a in array]
+
     def load_GPU_data(self):
         from pycuda import gpuarray
 
@@ -488,23 +498,28 @@ class RNNet(hf.FFNet):
         # rearrange GPU data so that signal is the first axis (so
         # that each time step is a single block of memory in GPU_calc_G)
         self.GPU_activations = [
-            gpuarray.to_gpu(np.ascontiguousarray(np.swapaxes(a, 0, 1)))
+            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+                np.swapaxes(a, 0, 1))), 1)
             for a in self.activations]
 
         self.GPU_d_activations = [
-            gpuarray.to_gpu(np.ascontiguousarray(np.rollaxis(np.swapaxes(a, 0,
-                                                                         1),
-                                                             - 1, 1)))
+            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+                np.rollaxis(np.swapaxes(a, 0, 1), -1, 1))), 2)
             if self.layers[i].stateful else
-            gpuarray.to_gpu(np.ascontiguousarray(np.swapaxes(a, 0, 1)))
+            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+                np.swapaxes(a, 0, 1))), 1)
             for i, a in enumerate(self.d_activations)]
 
         self.GPU_d2_loss = [
-            gpuarray.to_gpu(np.ascontiguousarray(np.swapaxes(a, 0, 1)))
+            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+                np.swapaxes(a, 0, 1))), 1)
             if a is not None else None for a in self.d2_loss]
 
-        self.GPU_tmp_space = [gpuarray.empty_like(a)
-                              for a in self.GPU_activations]
+        self.GPU_tmp_space = [self.split_axes(gpuarray.empty((a.shape[1],
+                                                              a.shape[0],
+                                                              a.shape[2]),
+                                                             self.dtype), 1)
+                              for a in self.activations]
 
         # pre-allocate calc_G arrays
         batch_size = self.inputs.shape[0]
@@ -542,7 +557,7 @@ class RNNet(hf.FFNet):
         R_states = self.GPU_states
         R_activations = self.GPU_tmp_space
         for i in range(self.n_layers):
-            R_activations[i].fill(0)
+            R_activations[i][0].base.fill(0)
             if R_states[i] is not None:
                 R_states[i][0].fill(0)
 
@@ -560,48 +575,48 @@ class RNNet(hf.FFNet):
                      for conn in self.offsets])
 
         for s in range(sig_len):
-            R_act = [R_activations[l][s] for l in range(self.n_layers)]
-
             for l in range(self.n_layers):
+                R_act = R_activations[l][s]
+
                 # input from feedforward connections
                 for pre in self.back_conns[l]:
                     vw, vb = v_ff[(pre, l)]
                     hf.gpu.dot(self.GPU_activations[pre][s], vw,
-                               out=R_act[l], increment=True)
-                    hf.gpu.iadd(R_act[l], vb)
-                    hf.gpu.dot(R_act[pre], W_ff[(pre, l)][0], out=R_act[l],
-                               increment=True)
+                               out=R_act, increment=True)
+                    hf.gpu.iadd(R_act, vb)
+                    hf.gpu.dot(R_activations[pre][s], W_ff[(pre, l)][0],
+                               out=R_act, increment=True)
 
                 # recurrent input
                 if self.rec_layers[l]:
                     if s == 0:
                         # bias input on first step
-                        hf.gpu.iadd(R_act[l], v_recs[l][1])
+                        hf.gpu.iadd(R_act, v_recs[l][1])
                     else:
                         hf.gpu.dot(self.GPU_activations[l][s - 1],
-                                   v_recs[l][0], out=R_act[l], increment=True)
+                                   v_recs[l][0], out=R_act, increment=True)
                         hf.gpu.dot(R_activations[l][s - 1], W_recs[l][0],
-                                   out=R_act[l], increment=True)
+                                   out=R_act, increment=True)
 
                 if not self.layers[l].stateful:
                     if not isinstance(self.layers[l], hf.nl.Linear):
                         # note: this requires a memory allocation if
                         # d_activations is non-diagonal
-                        hf.gpu.J_dot(self.GPU_d_activations[l][s], R_act[l],
-                                     out=R_act[l])
+                        hf.gpu.J_dot(self.GPU_d_activations[l][s], R_act,
+                                     out=R_act)
                 else:
-                    d_input = self.GPU_d_activations[l][s, 0]
-                    d_state = self.GPU_d_activations[l][s, 1]
-                    d_output = self.GPU_d_activations[l][s, 2]
+                    d_input = self.GPU_d_activations[l][s][0]
+                    d_state = self.GPU_d_activations[l][s][1]
+                    d_output = self.GPU_d_activations[l][s][2]
 
                     # note: we're doing this weird thing with two R_states
                     # in order to avoid having to copy data
                     i = s % 2
                     hf.gpu.J_dot(d_state, R_states[l][i],
                                  out=R_states[l][1 - i])
-                    hf.gpu.J_dot(d_input, R_act[l], out=R_states[l][1 - i],
+                    hf.gpu.J_dot(d_input, R_act, out=R_states[l][1 - i],
                                  increment=True)
-                    hf.gpu.J_dot(d_output, R_states[l][1 - i], out=R_act[l])
+                    hf.gpu.J_dot(d_output, R_states[l][1 - i], out=R_act)
 
         # R backward pass
         if self.truncation is None:
@@ -649,9 +664,9 @@ class RNNet(hf.FFNet):
                         hf.gpu.J_dot(self.GPU_d_activations[l][s], R_error[l],
                                      out=R_deltas[l], transpose_J=True)
                     else:
-                        d_input = self.GPU_d_activations[l][s, 0]
-                        d_state = self.GPU_d_activations[l][s, 1]
-                        d_output = self.GPU_d_activations[l][s, 2]
+                        d_input = self.GPU_d_activations[l][s][0]
+                        d_state = self.GPU_d_activations[l][s][1]
+                        d_output = self.GPU_d_activations[l][s][2]
 
                         i = s % 2
                         hf.gpu.J_dot(d_output, R_error[l], out=R_states[l][i],
