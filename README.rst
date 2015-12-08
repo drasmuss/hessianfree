@@ -71,7 +71,7 @@ optimization process.
   doesn't usually require much tweaking)
 * Customizable connectivity between layers (e.g., skip connections)
 * Efficient implementation, taking advantage of things like activity caching
-* Optional GPU acceleration if PyCUDA is installed
+* Optional GPU acceleration if PyCUDA and scikit-cuda are installed
 * Gradient checking (and Gauss-Newton matrix checking) implemented to help with 
   debugging
 * Inputs can be predefined or generated dynamically by some other system (like 

@@ -10,7 +10,6 @@ of the 27th International Conference on Machine Learning.
 
 
 from collections import defaultdict, OrderedDict
-from copy import deepcopy
 import pickle
 import warnings
 
@@ -59,7 +58,11 @@ class FFNet(object):
 
         # initialize layer nonlinearities
         if not isinstance(layers, (list, tuple)):
-            layers = [deepcopy(layers) for _ in range(self.n_layers)]
+            if isinstance(layers, hf.nl.Nonlinearity) and layers.stateful:
+                warnings.warn("Multiple layers sharing stateful nonlinearity, "
+                              "consider creating a separate instance for each "
+                              "layer.")
+            layers = [layers for _ in range(self.n_layers)]
             layers[0] = hf.nl.Linear()
 
         if len(layers) != len(shape):

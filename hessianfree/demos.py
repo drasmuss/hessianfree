@@ -22,7 +22,7 @@ def xor():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1], use_GPU=False, debug=False)
+    ff = FFNet([2, 5, 1])
 
     ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
