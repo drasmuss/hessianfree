@@ -3,7 +3,7 @@ from setuptools import setup
 with open("README.rst") as f:
     long_description = f.read()
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 
 setup(
     name='hessianfree',
