@@ -64,7 +64,7 @@ def test_J_dot(dtype):
 
 
 def test_sum_cols(dtype):
-    for _ in range(10):
+    for _ in range(100):
         N = 200
         a = np.random.randn(np.random.randint(1, N),
                             np.random.randint(1, N)).astype(dtype)
@@ -73,6 +73,20 @@ def test_sum_cols(dtype):
         out = hf.gpu.sum_cols(a_gpu).get()
 
         assert np.allclose(out, np.sum(a, axis=0), atol=1e-5)
+
+
+def test_multiply(dtype):
+    for _ in range(100):
+        N = 200
+        a = np.random.randn(np.random.randint(1, N),
+                            np.random.randint(1, N)).astype(dtype)
+        b = np.random.randn(*a.shape).astype(dtype)
+        a_gpu = gpuarray.to_gpu(a)
+        b_gpu = gpuarray.to_gpu(b)
+
+        out = hf.gpu.multiply(a_gpu, b_gpu).get()
+
+        assert np.allclose(out, a * b, atol=1e-5)
 
 
 def test_ff_calc_G(dtype):

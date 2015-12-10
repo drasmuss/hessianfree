@@ -28,6 +28,7 @@ def debug_wrapper(cpu_func, debug=False):
                     if isinstance(cpu_kwargs[k], gpuarray.GPUArray):
                         cpu_kwargs[k] = cpu_kwargs[k].get()
 
+                cpu_kwargs.pop("stream", None)
                 out_cpu = cpu_func(*cpu_args, **cpu_kwargs)
 
             out_gpu = gpu_func(*args, **kwargs)
@@ -35,7 +36,7 @@ def debug_wrapper(cpu_func, debug=False):
             if debug:
                 try:
                     tmp = out_gpu.get()
-                    assert np.allclose(tmp.ravel(), out_cpu.ravel(), rtol=1e-4)
+                    assert np.allclose(tmp.ravel(), out_cpu.ravel(), rtol=1e-3)
                 except AssertionError:
                     print np.max(np.abs(out_cpu - tmp))
                     print "gpu"
@@ -50,20 +51,20 @@ def debug_wrapper(cpu_func, debug=False):
     return debug_func_parametrized
 
 
-def cpu_dot(a, b, out=None, transpose_a=False, transpose_b=False,
+def cpu_dot(a, b, out=0, transpose_a=False, transpose_b=False,
             increment=False):
     result = np.dot(a.T if transpose_a else a, b.T if transpose_b else b)
 
     return result + out * increment
 
 
-def cpu_sum_cols(a, out=None, increment=False):
+def cpu_sum_cols(a, out=0, increment=False):
     result = np.sum(a, axis=0)
 
     return result + out * increment
 
 
-def cpu_J_dot(J, v, transpose_J=False, out=None, increment=False):
+def cpu_J_dot(J, v, out=0, transpose_J=False, increment=False):
     if J.ndim == 2:
         result = J * v
     else:
@@ -74,7 +75,7 @@ def cpu_J_dot(J, v, transpose_J=False, out=None, increment=False):
     return result + out * increment
 
 
-def cpu_multiply(a, b, out=None, increment=False):
+def cpu_multiply(a, b, out=0, increment=False):
     return a * b + out * increment
 
 
@@ -193,7 +194,7 @@ def sum_cols(a, out=None, increment=False, stream=None):
 
     assert a.dtype == out.dtype
 
-    block_x = a._block[0] / 32
+    block_x = min(a._block[0] / 32, a.shape[1])
     block_y = 32
 
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0), 1)
@@ -212,7 +213,7 @@ def iadd(a, b, stream=None):
     assert a.dtype == b.dtype
 
     block_x = min(32, a.shape[0])
-    block_y = min(max(1, a._block[0] / block_x), a.shape[1])
+    block_y = min(a._block[0] / block_x, a.shape[1])
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
             a.shape[0] / block_y + (a.shape[0] % block_y != 0))
 
@@ -233,14 +234,18 @@ def multiply(a, b, out=None, increment=False, stream=None):
     assert a.size == b.size
     assert a.dtype == b.dtype == out.dtype
 
+    block = (min(a._block[0], a.size), 1, 1)
+    grid = (a.size / block[0] + (a.size % block[0] != 0), 1, 1)
+
     hf.gpu.multiply_kernel[dtype == np.float32].prepared_async_call(
-        a._grid, a._block, stream,
+        grid, block, stream,
         a.gpudata, b.gpudata, out.gpudata, np.int32(a.size),
         np.int32(increment))
 
     return out
 
 
+# @debug_wrapper(cpu_dot, debug=True)
 def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
                increment=False, stream=None):
     # non-cublas matrix multiplication
