@@ -87,6 +87,33 @@ class ClassificationError(LossFunction):
     # be used for validation, which doesn't require either
 
 
+class StructuralDamping(LossFunction):
+    # note: this is not exactly the same as the structural damping in Martens,
+    # because it is applied on the output side of the nonlinearity (meaning
+    # that this error will be filtered through d_activations during the
+    # backwards propagation)
+
+    def __init__(self, weight, layers=None, optimizer=None):
+        self.weight = weight
+        self.layers = np.index_exp[1:-1] if layers is None else layers
+        self.opt = optimizer
+
+    def loss(self, activities, _):
+        return [None for _ in activities]
+
+    def d_loss(self, activities, _):
+        return [None for _ in activities]
+
+    def d2_loss(self, activities, _):
+        opt_damp = 1 if self.opt is None else getattr(self.opt, "damping", 1)
+
+        d2_loss = [None for _ in activities]
+        for l in np.arange(len(activities))[self.layers]:
+            d2_loss[l] = np.ones_like(activities[l]) * self.weight * opt_damp
+
+        return d2_loss
+
+
 class SparseL1(LossFunction):
     def __init__(self, weight, layers=None, target=0.0):
         """Imposes L1 sparsity constraint on nonlinearity activations.

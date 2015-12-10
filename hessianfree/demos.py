@@ -205,7 +205,7 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
     test = (inputs, targets)
 
     if model_args is None:
-        rnn = RNNet(shape=[1, 10, 1], struc_damping=None,
+        rnn = RNNet(shape=[1, 10, 1],
                     layers=[Linear(), Logistic(), Logistic()],
                     debug=False, use_GPU=False)
     else:
@@ -335,8 +335,7 @@ def plant(plots=True):
 
     plant = Plant(A, B, targets, init1)
 
-    rnn = RNNet(shape=[2, 16, 2], struc_damping=None,
-                layers=[Linear(), Tanh(), plant],
+    rnn = RNNet(shape=[2, 16, 2], layers=[Linear(), Tanh(), plant],
                 W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
 
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,

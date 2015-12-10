@@ -44,9 +44,10 @@ def test_strucdamping(use_GPU):
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
-    # TODO: run with debug=True when struc_damping check works
-    rnn = hf.RNNet(shape=[1, 5, 1], debug=False, struc_damping=0.1,
-                   use_GPU=use_GPU)
+    rnn = hf.RNNet(shape=[1, 5, 1],
+                   loss_type=[hf.loss_funcs.SquaredError(),
+                              hf.loss_funcs.StructuralDamping(0.05)],
+                   debug=True, use_GPU=use_GPU)
 
     rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
                     max_epochs=30, print_period=None)

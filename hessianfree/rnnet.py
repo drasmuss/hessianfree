@@ -15,12 +15,10 @@ import hessianfree as hf
 
 
 class RNNet(hf.FFNet):
-    def __init__(self, shape, struc_damping=None, rec_layers=None,
-                 W_rec_params={}, truncation=None, **kwargs):
+    def __init__(self, shape, rec_layers=None, W_rec_params={},
+                 truncation=None, **kwargs):
         """Initialize the parameters of the network.
 
-        :param struc_damping: controls scale of structural damping (relative
-            to Tikhonov damping)
         :param rec_layers: by default, all layers except the first and last
             have a recurrent connection. A list of booleans can be passed here
             to override that on a layer-by-layer basis.
@@ -47,7 +45,6 @@ class RNNet(hf.FFNet):
         # super constructor
         super(RNNet, self).__init__(shape, **kwargs)
 
-        self.struc_damping = struc_damping
         self.truncation = truncation
 
         # add on recurrent weights
@@ -453,16 +450,6 @@ class RNNet(hf.FFNet):
                         self.J_dot(d_state, R_states[l], transpose_J=True,
                                    out=R_states[l])
 
-                    # apply structural damping
-                    struc_damping = getattr(self.optimizer, "struc_damping",
-                                            None)
-                    # TODO: could we just define struc_damping as a loss
-                    # function instead?
-                    if struc_damping is not None and self.rec_layers[l]:
-                        # penalize change in the output w.r.t. input (which is
-                        # what R_activations represents)
-                        R_deltas[l] += struc_damping * R_activations[l][:, s]
-
                     # recurrent gradient
                     if self.rec_layers[l]:
                         W_g, b_g = Gv_recs[l]
@@ -675,16 +662,6 @@ class RNNet(hf.FFNet):
                                      transpose_J=True)
                         hf.gpu.J_dot(d_state, R_states[l][i],
                                      out=R_states[l][1 - i], transpose_J=True)
-
-                    # apply structural damping
-                    struc_damping = getattr(self.optimizer, "struc_damping",
-                                            None)
-                    # TODO: could we just define struc_damping as a loss
-                    # function instead?
-                    if struc_damping is not None and self.rec_layers[l]:
-                        # penalize change in the output w.r.t. input (which is
-                        # what R_activations represents)
-                        R_deltas[l] += struc_damping * R_activations[l][s]
 
                     # recurrent gradient
                     if self.rec_layers[l]:

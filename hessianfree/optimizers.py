@@ -24,8 +24,7 @@ class Optimizer(object):
 
 
 class HessianFree(Optimizer):
-    def __init__(self, CG_iter=250, init_damping=1,
-                 struc_damping=None, plotting=True):
+    def __init__(self, CG_iter=250, init_damping=1, plotting=True):
         """Use Hessian-free optimization to compute the weight update.
 
         Based on
@@ -34,8 +33,6 @@ class HessianFree(Optimizer):
 
         :param CG_iter: the maximum number of CG iterations to run per epoch
         :param init_damping: the initial value of the Tikhonov damping
-        :param struc_damping: scale on structural damping, relative to
-            Tikhonov damping (only used in recurrent nets)
         :param plotting: if True then collect data for plotting (actual
             plotting handled in parent network)
         """
@@ -44,7 +41,6 @@ class HessianFree(Optimizer):
         self.CG_iter = CG_iter
         self.init_delta = None
         self.damping = init_damping
-        self._struc_damping = struc_damping
 
         self.plotting = plotting
         self.plots = defaultdict(list)
@@ -242,12 +238,6 @@ class HessianFree(Optimizer):
         deltas += [(i, get(delta))]
 
         return deltas
-
-    @property
-    def struc_damping(self):
-        if self._struc_damping is None:
-            return None
-        return self.damping * self._struc_damping
 
 
 class SGD(Optimizer):
