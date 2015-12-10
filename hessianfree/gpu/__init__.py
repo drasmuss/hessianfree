@@ -25,9 +25,6 @@ def parse_kernels():
     with open(os.path.join(os.path.dirname(__file__), "kernels.cu")) as f:
         code = f.read()
 
-    with open(os.path.join(os.path.dirname(__file__), "m_dot.cu")) as f:
-        code += "\n" + f.read()
-
     code = code.replace("%tile_len%", "32")
 
     funcs = code.split("__global__ void")
