@@ -21,7 +21,7 @@ import hessianfree as hf
 class FFNet(object):
     def __init__(self, shape, layers=hf.nl.Logistic(), conns=None,
                  loss_type=hf.loss_funcs.SquaredError(), W_init_params={},
-                 use_GPU=False, load_weights=None, debug=False):
+                 use_GPU=False, load_weights=None, debug=False, rng=None):
         """Initialize the parameters of the network.
 
         :param shape: list specifying the number of neurons in each layer
@@ -37,16 +37,16 @@ class FFNet(object):
         :param use_GPU: run curvature calculation on GPU (requires PyCUDA)
         :param load_weights: load initial weights from given array or filename
         :param debug: activates (expensive) features to help with debugging
+        :param rng: instance of np.random.RandomState() used to generate any
+            random numbers for this network (use this to control the seed)
         """
-
-        # TODO: have each network keep its own rng, rather than using
-        # the default np.random
 
         self.debug = debug
         self.shape = shape
         self.n_layers = len(shape)
         self.dtype = np.float64 if debug else np.float32
         self._optimizer = None
+        self.rng = np.random.RandomState() if rng is None else rng
 
         # note: this isn't used internally, it is just here so that an
         # external process with a handle to this object can tell what epoch
@@ -273,8 +273,8 @@ class FFNet(object):
 
         if not callable(inputs):
             # inputs/targets are vectors, select a subset
-            indices = np.random.choice(np.arange(len(inputs)),
-                                       size=batch_size, replace=False)
+            indices = self.rng.choice(np.arange(len(inputs)), size=batch_size,
+                                      replace=False)
             self.inputs = inputs[indices]
             self.targets = targets[indices]
 
@@ -314,8 +314,8 @@ class FFNet(object):
 
         if self.use_GPU:
             # TODO: we could just allocate these on the first timestep and
-            # then do a copy rather than an allocation after that, if that
-            # makes a difference
+            # then do a copy rather than an allocation after that, if this
+            # ever became a significant part of the computation time
             self.load_GPU_data()
 
     def load_GPU_data(self):
@@ -566,7 +566,6 @@ class FFNet(object):
             Gv = out
             Gv.fill(0)
 
-        # TODO: remove this if we stop using this function outside the GPU CG
         if not isinstance(v, gpuarray.GPUArray):
             GPU_v = gpuarray.to_gpu(v)
         else:
@@ -715,18 +714,18 @@ class FFNet(object):
 
                 for j in range(s[1]):
                     # pick num_conn random pre neurons
-                    indices = np.random.choice(np.arange(s[0]),
-                                               size=min(num_conn, s[0]),
-                                               replace=False)
+                    indices = self.rng.choice(np.arange(s[0]),
+                                              size=min(num_conn, s[0]),
+                                              replace=False)
 
                     # connect to post
-                    W[i][indices, j] = np.random.randn(indices.size) * coeff[i]
+                    W[i][indices, j] = self.rng.randn(indices.size) * coeff[i]
             elif init_type[i] == "uniform":
-                W[i][:-1] = np.random.uniform(-coeff[i] / np.sqrt(s[0]),
-                                              coeff[i] / np.sqrt(s[0]),
-                                              (s[0], s[1]))
+                W[i][:-1] = self.rng.uniform(-coeff[i] / np.sqrt(s[0]),
+                                             coeff[i] / np.sqrt(s[0]),
+                                             (s[0], s[1]))
             elif init_type[i] == "gaussian":
-                W[i][:-1] = np.random.randn(s[0], s[1]) * coeff[i]
+                W[i][:-1] = self.rng.randn(s[0], s[1]) * coeff[i]
             else:
                 raise ValueError("Unknown weight initialization (%s)"
                                  % init_type)

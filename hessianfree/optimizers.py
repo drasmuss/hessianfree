@@ -153,8 +153,6 @@ class HessianFree(Optimizer):
             base_grad = gpuarray.to_gpu(grad)
             delta = gpuarray.to_gpu(init_delta)
             G_dir = gpuarray.zeros(grad.shape, dtype=self.net.dtype)
-            # TODO: is there a way to get a float value out of dot rather than
-            # a 0-d array, so we don't have to do the get()?
             dot = lambda a, b: gpuarray.dot(a, b).get()
             get = lambda x: x.get(pagelocked=True)
             self.calc_G = self.net.GPU_calc_G

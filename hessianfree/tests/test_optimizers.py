@@ -8,10 +8,10 @@ pytestmark = pytest.mark.parametrize("use_GPU", use_GPU)
 
 
 def test_ff_CG(use_GPU):
-    np.random.seed(0)
-    inputs = np.random.randn(100, 1).astype(np.float32)
-    targets = np.random.randn(100, 1).astype(np.float32)
-    ff = hf.FFNet([1, 10, 1], debug=False, use_GPU=use_GPU)
+    rng = np.random.RandomState(0)
+    inputs = rng.randn(100, 1).astype(np.float32)
+    targets = rng.randn(100, 1).astype(np.float32)
+    ff = hf.FFNet([1, 10, 1], debug=False, use_GPU=use_GPU, rng=rng)
     ff.optimizer = hf.opt.HessianFree()
     ff.cache_minibatch(inputs, targets)
 
@@ -33,10 +33,10 @@ def test_ff_CG(use_GPU):
 
 
 def test_rnn_CG(use_GPU):
-    np.random.seed(0)
-    inputs = np.random.randn(100, 10, 2).astype(np.float32)
-    targets = np.random.randn(100, 10, 1).astype(np.float32)
-    rnn = hf.RNNet([2, 5, 1], debug=False, use_GPU=use_GPU)
+    rng = np.random.RandomState(0)
+    inputs = rng.randn(100, 10, 2).astype(np.float32)
+    targets = rng.randn(100, 10, 1).astype(np.float32)
+    rnn = hf.RNNet([2, 5, 1], debug=False, use_GPU=use_GPU, rng=rng)
     rnn.optimizer = hf.opt.HessianFree()
     rnn.cache_minibatch(inputs, targets)
 

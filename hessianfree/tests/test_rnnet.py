@@ -106,7 +106,6 @@ def test_asym_dact(use_GPU):
 
 
 def test_plant(use_GPU):
-    np.random.seed(0)
     n_inputs = 10
     sig_len = 20
 
@@ -201,7 +200,7 @@ def test_plant(use_GPU):
     rnn = hf.RNNet(shape=[2, 16, 2], debug=False,
                    layers=[Linear(), Tanh(), plant],
                    W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01},
-                   use_GPU=use_GPU)
+                   use_GPU=use_GPU, rng=np.random.RandomState(0))
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
                     max_epochs=100, plotting=False, print_period=None)
 

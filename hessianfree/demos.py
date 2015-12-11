@@ -160,8 +160,6 @@ def sparsity():
 def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
     """Run a profiler on the code."""
 
-    np.random.seed(0)
-
     if cprofile:
         p = Profile()
         p.enable()
@@ -170,12 +168,13 @@ def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
         pycuda.driver.start_profiler()
 
     if func == "mnist":
-        mnist({'use_GPU': use_GPU},
+        mnist({'use_GPU': use_GPU, 'rng': np.random.RandomState(0)},
               {'max_epochs': max_epochs, 'plotting': False, 'batch_size': 7500,
                'CG_iter': 10})
     elif func == "integrator":
         integrator({'shape': [1, 100, 1], 'layers': Logistic(),
-                    'use_GPU': use_GPU, 'debug': False},
+                    'use_GPU': use_GPU, 'debug': False,
+                    'rng': np.random.RandomState(0)},
                    {'max_epochs': max_epochs, 'plotting': False,
                     'CG_iter': 10},
                    n_inputs=500, sig_len=200, plots=False)
@@ -246,7 +245,6 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
 def plant(plots=True):
     """Example of a network using a dynamic plant as the output layer."""
 
-    np.random.seed(0)
     n_inputs = 10
     sig_len = 20
 
@@ -336,7 +334,8 @@ def plant(plots=True):
     plant = Plant(A, B, targets, init1)
 
     rnn = RNNet(shape=[2, 16, 2], layers=[Linear(), Tanh(), plant],
-                W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01})
+                W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01},
+                rng=np.random.RandomState(0))
 
     rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,
                                                        init_damping=1),
