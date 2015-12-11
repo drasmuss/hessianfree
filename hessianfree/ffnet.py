@@ -615,11 +615,8 @@ class FFNet(object):
             hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i], out=R_error[i],
                          transpose_J=True)
 
-        Gv /= len(self.inputs)
-
-        # Tikhonov damping
-        # TODO: could replace this with an axpb
-        Gv += GPU_v * damping
+        # Tikhonov damping and batch mean
+        Gv._axpbyz(1.0 / len(self.inputs), GPU_v, damping, Gv)
 
         if isinstance(v, gpuarray.GPUArray):
             return Gv

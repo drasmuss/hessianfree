@@ -673,10 +673,8 @@ class RNNet(hf.FFNet):
                             hf.gpu.sum_cols(R_deltas[l], out=Gv_recs[l][1],
                                             increment=True)
 
-        Gv /= batch_size
-
-        # Tikhonov damping
-        Gv += GPU_v * damping
+        # Tikhonov damping and batch mean
+        Gv._axpbyz(1.0 / batch_size, GPU_v, damping, Gv)
 
         if isinstance(v, gpuarray.GPUArray):
             return Gv
