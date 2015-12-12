@@ -26,8 +26,6 @@ class Nonlinearity(object):
 
         pass
 
-# TODO: make in-place nonlinearities if this ever becomes a bottleneck
-
 
 class Logistic(Nonlinearity):
     def __init__(self):
@@ -51,10 +49,12 @@ class Linear(Nonlinearity):
 
 
 class ReLU(Nonlinearity):
-    def __init__(self):
+    def __init__(self, max=1e10):
         super(ReLU, self).__init__()
-        self.activation = lambda x: np.maximum(0, x)
-        self.d_activation = lambda _, a: a > 0
+        # note: clipping relu above as well as below to help avoid
+        # numerical errors
+        self.activation = lambda x: np.clip(x, 0, max)
+        self.d_activation = lambda x, a: x == a
 
 
 class Gaussian(Nonlinearity):
@@ -70,13 +70,13 @@ class Softmax(Nonlinearity):
 
     def activation(self, x):
         e = np.exp(x - np.max(x, axis=-1)[..., None])
-        # note: shift everything down by max (doesn't change
+        # note: shifting everything down by max (doesn't change
         # result, but can help avoid numerical errors)
 
         e /= np.sum(e, axis=-1)[..., None]
 
-        e[e < 1e-10] = 1e-10
         # clip to avoid numerical errors
+        e[e < 1e-10] = 1e-10
 
         return e
 
@@ -116,8 +116,8 @@ class SoftLIF(Nonlinearity):
 
         d = np.zeros_like(j)
         aa, jj, xx = a[j > 0], j[j > 0], x[j > 0]
-        d[j > 0] = (self.tau_rc * aa * aa) / (
-            self.amp * jj * (jj + 1) * (1 + np.exp(-xx / self.sigma)))
+        d[j > 0] = (self.tau_rc * aa * aa) / (self.amp * jj * (jj + 1) *
+                                              (1 + np.exp(-xx / self.sigma)))
         return d
 
 
@@ -135,8 +135,12 @@ class Continuous(Nonlinearity):
     def activation(self, x):
         self.act_count += 1
 
-        # s_{t+1} = (1-c)s + cx
-        self.state += (x - self.state) * self.coeff
+        if self.state is None:
+            self.state = np.zeros_like(x)
+
+        # s_{t+1} = (1-c)s_t + cx
+        self.state *= 1 - self.coeff
+        self.state += x * self.coeff
 
         return self.base.activation(self.state)
 
@@ -164,6 +168,6 @@ class Continuous(Nonlinearity):
         return d_act
 
     def reset(self, init=None):
-        self.state = 0.0 if init is None else init.copy()
+        self.state = None if init is None else init.copy()
         self.act_count = 0
         self.d_act_count = 0

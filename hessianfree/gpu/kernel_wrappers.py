@@ -196,8 +196,8 @@ def sum_cols(a, out=None, increment=False, stream=None):
 
     block_x = min(a._block[0] / 32, a.shape[1])
     block_y = 32
-
     grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0), 1)
+
     hf.gpu.sum_cols_kernel[dtype == np.float32].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
         a.gpudata, out.gpudata, np.int32(increment), np.int32(a.shape[0]),

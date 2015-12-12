@@ -368,6 +368,9 @@ class FFNet(object):
                 d_activations[i] = self.layers[i].d_activation(inputs,
                                                                activations[i])
 
+        if not np.all([np.all(np.isfinite(a)) for a in activations]):
+            raise OverflowError("Non-finite nonlinearity activation value")
+
         if deriv:
             return activations, d_activations
 
@@ -398,9 +401,6 @@ class FFNet(object):
         # note: np.nan can be used in the target to specify places
         # where the target is not defined. those get translated to
         # zero error in the loss function.
-
-        # we don't want to confuse nan outputs with nan targets
-        assert np.all(np.isfinite(activations[-1]))
 
         error = self.loss.batch_loss(activations, targets)
 

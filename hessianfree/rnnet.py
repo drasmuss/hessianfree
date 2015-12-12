@@ -135,8 +135,8 @@ class RNNet(hf.FFNet):
                     rec_input = 0
 
                 # apply activation function
-                activations[i][:, s] = (
-                    self.layers[i].activation(ff_input + rec_input))
+                activations[i][:, s] = self.layers[i].activation(ff_input +
+                                                                 rec_input)
 
                 # compute derivative
                 if deriv:
@@ -151,6 +151,9 @@ class RNNet(hf.FFNet):
                                             d_act.shape[1:])),
                             dtype=self.dtype)
                     d_activations[i][:, s] = d_act
+
+        if not np.all([np.all(np.isfinite(a)) for a in activations]):
+            raise OverflowError("Non-finite nonlinearity activation value")
 
         if deriv:
             return activations, d_activations

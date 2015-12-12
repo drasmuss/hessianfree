@@ -1,3 +1,4 @@
+import warnings
 from collections import defaultdict
 
 import numpy as np
@@ -180,6 +181,10 @@ class HessianFree(Optimizer):
 
             # calculate step size
             step = res_norm / dot(direction, G_dir)
+
+            if not np.isfinite(step):
+                warnings.warn("Non-finite step value (%f)" % step)
+            step = np.nan_to_num(step)
 
             if printing:
                 print "G_dir norm", np.linalg.norm(get(G_dir))
