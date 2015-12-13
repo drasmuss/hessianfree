@@ -245,10 +245,12 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
 def plant(plots=True):
     """Example of a network using a dynamic plant as the output layer."""
 
-    n_inputs = 10
-    sig_len = 20
+    n_inputs = 32
+    sig_len = 15
 
     class Plant(Nonlinearity):
+        # this plant implements a simple dynamic system, with two-dimensional
+        # state representing [position, velocity]
         def __init__(self, A, B, targets, init_state):
             super(Plant, self).__init__(stateful=True)
 
@@ -270,6 +272,11 @@ def plant(plots=True):
 
         def activation(self, x):
             self.act_count += 1
+
+            # this implements a basic s_{t+1} = A*s_t + B*x dynamic system.
+            # but to make things a little more complicated we allow the B
+            # matrix to be dynamic, so it's actually
+            # s_{t+1} = A*s_t + B(s_t)*x
 
             self.B_matrix, self.d_B_matrix = self.B(self.state)
 
@@ -313,33 +320,40 @@ def plant(plots=True):
                                    dtype=np.float32)
             self.B_matrix = self.d_B_matrix = None
 
+    # static A matrix (converts velocity into a change in position)
+    A = [[1, 0],
+         [0.2, 1]]
+
+    # dynamic B(s) matrix (converts input into velocity, modulated by current
+    # state)
+    # note that this dynamic B matrix doesn't really make much sense, it's
+    # just here to demonstrate what happens with a plant whose dynamics
+    # change over time
+    def B(state):
+        B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
+        B[:, 1, 1] = np.tanh(state[:, 0])
+
+        d_B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
+        d_B[:, 1, 1] = 1 - np.tanh(state[:, 0]) ** 2
+
+        return B, d_B
+
+    # random initial position and velocity
+    init_state = np.random.uniform(-0.5, 0.5, size=(n_inputs, 2))
+
+    # the target will be to end at position 1 with velocity 0
     targets = np.ones((n_inputs, sig_len, 2), dtype=np.float32)
     targets[:, :, 1] = 0
     targets[:, :-1, :] = np.nan
 
-    A = [[1, 0],
-         [0.2, 1]]
-
-    def B(state):
-        B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        B[:, 1, 1] = np.cos(state[:, 0])
-
-        d_B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        d_B[:, 1, 1] = -np.sin(state[:, 0])
-
-        return B, d_B
-
-    init1 = np.random.uniform(-1, 1, size=(n_inputs, 2))
-
-    plant = Plant(A, B, targets, init1)
+    plant = Plant(A, B, targets, init_state)
 
     rnn = RNNet(shape=[2, 16, 2], layers=[Linear(), Tanh(), plant],
-                W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01},
+                W_init_params={"coeff": 0.1}, W_rec_params={"coeff": 0.1},
                 rng=np.random.RandomState(0))
 
-    rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100,
-                                                       init_damping=1),
-                    batch_size=None, max_epochs=100, plotting=True)
+    rnn.run_batches(plant, None, HessianFree(CG_iter=20, init_damping=10),
+                    max_epochs=150, plotting=True)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(plant, None, optimizer=SGD(l_rate=0.01),
@@ -350,19 +364,12 @@ def plant(plots=True):
         outputs = rnn.forward(plant, rnn.W)[-1]
 
         plt.figure()
-        plt.plot(plant.get_inputs()[:, :, 0].squeeze().T)
-        plt.plot(plant.get_inputs()[:, :, 1].squeeze().T)
-        plt.title("inputs")
-
-        plt.figure()
-        plt.plot(plant.get_targets()[:, :, 0].squeeze().T)
-        plt.plot(plant.get_targets()[:, :, 1].squeeze().T)
-        plt.title("targets")
-
-        plt.figure()
         plt.plot(outputs[:, :, 0].squeeze().T)
+        plt.title("position")
+
+        plt.figure()
         plt.plot(outputs[:, :, 1].squeeze().T)
-        plt.title("outputs")
+        plt.title("velocity")
 
         plt.show()
 

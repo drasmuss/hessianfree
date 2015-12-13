@@ -106,10 +106,12 @@ def test_asym_dact(use_GPU):
 
 
 def test_plant(use_GPU):
-    n_inputs = 10
-    sig_len = 20
+    n_inputs = 32
+    sig_len = 15
 
     class Plant(Nonlinearity):
+        # this plant implements a simple dynamic system, with two-dimensional
+        # state representing [position, velocity]
         def __init__(self, A, B, targets, init_state):
             super(Plant, self).__init__(stateful=True)
 
@@ -132,15 +134,17 @@ def test_plant(use_GPU):
         def activation(self, x):
             self.act_count += 1
 
+            # this implements a basic s_{t+1} = A*s_t + B*x dynamic system.
+            # but to make things a little more complicated we allow the B
+            # matrix to be dynamic, so it's actually
+            # s_{t+1} = A*s_t + B(s_t)*x
+
             self.B_matrix, self.d_B_matrix = self.B(self.state)
 
             self.state = (np.dot(self.state, self.A) +
                           np.einsum("ij,ijk->ik", x, self.B_matrix))
 
             return self.state[:x.shape[0]]
-            # note: generally x will be the same shape as state, this just
-            # handles the case where we're passed a single item instead
-            # of batch)
 
         def d_activation(self, x, _):
             self.d_act_count += 1
@@ -177,32 +181,40 @@ def test_plant(use_GPU):
                                    dtype=np.float32)
             self.B_matrix = self.d_B_matrix = None
 
+    # static A matrix (converts velocity into a change in position)
+    A = [[1, 0],
+         [0.2, 1]]
+
+    # dynamic B(s) matrix (converts input into velocity, modulated by current
+    # state)
+    # note that this dynamic B matrix doesn't really make much sense, it's
+    # just here to demonstrate what happens with a plant whose dynamics
+    # change over time
+    def B(state):
+        B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
+        B[:, 1, 1] = np.tanh(state[:, 0])
+
+        d_B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
+        d_B[:, 1, 1] = 1 - np.tanh(state[:, 0]) ** 2
+
+        return B, d_B
+
+    # random initial position and velocity
+    init_state = np.random.uniform(-0.5, 0.5, size=(n_inputs, 2))
+
+    # the target will be to end at position 1 with velocity 0
     targets = np.ones((n_inputs, sig_len, 2), dtype=np.float32)
     targets[:, :, 1] = 0
     targets[:, :-1, :] = np.nan
 
-    A = [[1, 0],
-         [0.2, 1]]
+    plant = Plant(A, B, targets, init_state)
 
-    def B(state):
-        B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        B[:, 1, 1] = np.cos(state[:, 0])
+    rnn = hf.RNNet(shape=[2, 16, 2], layers=[Linear(), Tanh(), plant],
+                   W_init_params={"coeff": 0.1}, W_rec_params={"coeff": 0.1},
+                   use_GPU=use_GPU, rng=np.random.RandomState(0), debug=False)
 
-        d_B = np.zeros((state.shape[0], state.shape[1], state.shape[1]))
-        d_B[:, 1, 1] = -np.sin(state[:, 0])
-
-        return B, d_B
-
-    init1 = np.random.uniform(-1, 1, size=(n_inputs, 2))
-
-    plant = Plant(A, B, targets, init1)
-
-    rnn = hf.RNNet(shape=[2, 16, 2], debug=False,
-                   layers=[Linear(), Tanh(), plant],
-                   W_init_params={"coeff": 0.01}, W_rec_params={"coeff": 0.01},
-                   use_GPU=use_GPU, rng=np.random.RandomState(0))
-    rnn.run_batches(plant, None, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=100, plotting=False, print_period=None)
+    rnn.run_batches(plant, None, HessianFree(CG_iter=20, init_damping=10),
+                    max_epochs=150, plotting=True)
 
     outputs = rnn.forward(plant, rnn.W)
 
