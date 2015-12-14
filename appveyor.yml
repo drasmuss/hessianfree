@@ -2,7 +2,11 @@ build: false
 
 environment:
   matrix:
-    - PYTHON_VERSION: 2.7
+    - CONDA_DEPS: numpy==1.9.2
+      PYTHON_VERSION: 2.7
+      MINICONDA: C:\Miniconda-x64
+    - CONDA_DEPS: numpy
+      PYTHON_VERSION: 2.7
       MINICONDA: C:\Miniconda-x64
 
 init:
@@ -13,7 +17,7 @@ install:
   - conda config --set always_yes yes --set changeps1 no
   - conda update -q conda
   - conda info -a
-  - "conda create -q -n test python=%PYTHON_VERSION% pip numpy>=1.9"
+  - "conda create -q -n test python=%PYTHON_VERSION% pip %CONDA_DEPS%"
   - activate test
   - pip install pytest
   - pip install -r requirements.txt

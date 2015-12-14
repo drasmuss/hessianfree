@@ -2,12 +2,16 @@ language: python
 python:
   - "2.7"
 notifications:
-  email: false
+  email:
+    on_success: change
+    on_failure: change
   
 env:
-  global:
-    - CONDA_DEPS="numpy>=1.9"
-    - PIP_DEPS="pytest>=2.5"
+  matrix:
+    - CONDA_DEPS="numpy==1.9.2"
+      PYTHON_VERSION="2.7"
+    - CONDA_DEPS="numpy"
+      PYTHON_VERSION="2.7"
   
 # Setup Miniconda
 before_install:
@@ -17,13 +21,12 @@ before_install:
   - conda config --set always_yes yes --set changeps1 no
   - conda update -q conda
   - conda info -a
-  - conda create -q -n test python=2.7 pip
+  - conda create -q -n test python=$PYTHON_VERSION pip $CONDA_DEPS
   - source activate test
   
 # Install packages with conda, then pip
 install:
-  - if [[ -n $CONDA_DEPS ]]; then conda install $CONDA_DEPS; fi
-  - if [[ -n $PIP_DEPS ]]; then pip install "$PIP_DEPS"; fi
+  - pip install pytest
   - pip install -r requirements.txt
   
 script:
