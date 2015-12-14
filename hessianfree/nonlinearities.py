@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.special import expit
 
 
 class Nonlinearity(object):
@@ -27,18 +26,22 @@ class Nonlinearity(object):
         pass
 
 
-class Logistic(Nonlinearity):
-    def __init__(self):
-        super(Logistic, self).__init__()
-        self.activation = expit
-        self.d_activation = lambda _, a: a * (1 - a)
-
-
 class Tanh(Nonlinearity):
     def __init__(self):
         super(Tanh, self).__init__()
         self.activation = np.tanh
         self.d_activation = lambda _, a: 1 - a ** 2
+
+
+class Logistic(Nonlinearity):
+    def __init__(self):
+        super(Logistic, self).__init__()
+        try:
+            from scipy.special import expit
+        except ImportError:
+            expit = lambda x: 1 / (1 + np.exp(-x))
+        self.activation = expit
+        self.d_activation = lambda _, a: a * (1 - a)
 
 
 class Linear(Nonlinearity):
