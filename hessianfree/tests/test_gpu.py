@@ -10,8 +10,10 @@ pytestmark = [pytest.mark.skipif(not hf.gpu_enabled,
               pytest.mark.parametrize("dtype", [np.float32, np.float64])]
 
 
-@pytest.mark.parametrize("dot_type", [hf.gpu.kernel_wrappers.cublas_dot,
-                                      hf.gpu.kernel_wrappers.shared_dot])
+@pytest.mark.parametrize("dot_type",
+                         [hf.gpu.kernel_wrappers.cublas_dot,
+                          hf.gpu.kernel_wrappers.shared_dot]
+                         if hf.gpu_enabled else [None])
 def test_dot(dtype, dot_type):
     for _ in range(1000):
         N = 100
