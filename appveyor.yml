@@ -1,0 +1,22 @@
+build: false
+
+environment:
+  matrix:
+    - PYTHON_VERSION: 2.7
+      MINICONDA: C:\Miniconda-x64
+
+init:
+  - "ECHO %PYTHON_VERSION% %MINICONDA%"
+
+install:
+  - "set PATH=%MINICONDA%;%MINICONDA%\\Scripts;%PATH%"
+  - conda config --set always_yes yes --set changeps1 no
+  - conda update -q conda
+  - conda info -a
+  - "conda create -q -n test python=%PYTHON_VERSION% pip numpy>=1.9"
+  - activate test
+  - pip install pytest
+  - pip install -r requirements.txt
+
+test_script:
+  - py.test
