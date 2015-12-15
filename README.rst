@@ -1,3 +1,19 @@
+.. image:: https://travis-ci.org/drasmuss/hessianfree.svg?branch=master
+  :target: https://travis-ci.org/drasmuss/hessianfree
+  :alt: Travis-CI build status
+  
+.. image:: https://ci.appveyor.com/api/projects/status/mytincgjvboav37o?svg=true
+  :target: https://ci.appveyor.com/project/drasmuss/hessianfree
+  :alt: AppVeyor build status
+    
+.. image:: https://img.shields.io/pypi/v/hessianfree.svg
+  :target: https://pypi.python.org/pypi/hessianfree
+  :alt: Latest PyPI version
+
+.. image:: https://img.shields.io/pypi/d/hessianfree.svg
+  :target: https://pypi.python.org/pypi/hessianfree
+  :alt: Number of PyPI downloads
+
 **************************************************
 Python implementation of Hessian-free optimization
 **************************************************
