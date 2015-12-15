@@ -2,7 +2,7 @@
   :target: https://travis-ci.org/drasmuss/hessianfree
   :alt: Travis-CI build status
   
-.. image:: https://ci.appveyor.com/api/projects/status/mytincgjvboav37o?svg=true
+.. image:: https://ci.appveyor.com/api/projects/status/mytincgjvboav37o/branch/master?svg=true
   :target: https://ci.appveyor.com/project/drasmuss/hessianfree
   :alt: AppVeyor build status
     
@@ -61,8 +61,8 @@ Requirements
 ------------
 
 * python 2.7
-* numpy 1.9
-* matplotlib 1.4
+* numpy 1.9.2
+* matplotlib 1.3.1
 * optional: scipy 0.15, pycuda 2015, scikit-cuda 0.5, pytest 2.5
 
 (older versions may work, but are untested)

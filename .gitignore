@@ -1,7 +1,9 @@
-*.pyc
-*.pkl
-dist
 *.egg-info
+*.pkl
+*.png
+*.pyc
 *_weights.npy
-*/tests/*.png
+.project
+.pydevproject
+dist
 profilestats
