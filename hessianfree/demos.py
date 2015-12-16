@@ -7,13 +7,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-from hessianfree import FFNet, RNNet
-from hessianfree.nonlinearities import (Logistic, Tanh, Softmax, SoftLIF, ReLU,
-                                        Continuous, Linear, Nonlinearity,
-                                        Gaussian)
-from hessianfree.optimizers import HessianFree, SGD
-from hessianfree.loss_funcs import (SquaredError, CrossEntropy, SparseL1,
-                                    SparseL2, ClassificationError)
+import hessianfree as hf
 
 
 def xor():
@@ -22,9 +16,9 @@ def xor():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 1])
+    ff = hf.FFNet([2, 5, 1])
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
@@ -47,13 +41,15 @@ def mnist(model_args=None, run_args=None):
         train, _, test = pickle.load(f)
 
     if model_args is None:
-        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10],
-                   layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
-                   use_GPU=True, debug=False)
+        ff = hf.FFNet([28 * 28, 1024, 512, 256, 32, 10],
+                      layers=([hf.nl.Linear()] + [hf.nl.ReLU()] * 4 +
+                              [hf.nl.Softmax()]),
+                      use_GPU=True, debug=False)
     else:
-        ff = FFNet([28 * 28, 1024, 512, 256, 32, 10],
-                   layers=[Linear()] + [ReLU()] * 4 + [Softmax()],
-                   **model_args)
+        ff = hf.FFNet([28 * 28, 1024, 512, 256, 32, 10],
+                      layers=([hf.nl.Linear()] + [hf.nl.ReLU()] * 4 +
+                              [hf.nl.Softmax()]),
+                      **model_args)
 
     inputs = train[0]
     targets = np.zeros((inputs.shape[0], 10), dtype=np.float32)
@@ -66,21 +62,23 @@ def mnist(model_args=None, run_args=None):
     test = (test[0], tmp)
 
     if run_args is None:
-        ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=250,
-                                                              init_damping=45),
+        ff.run_batches(inputs, targets,
+                       optimizer=hf.opt.HessianFree(CG_iter=250,
+                                                    init_damping=45),
                        batch_size=7500, test=test, max_epochs=1000,
-                       plotting=True, test_err=ClassificationError())
+                       test_err=hf.loss_funcs.ClassificationError(),
+                       plotting=True)
     else:
         CG_iter = run_args.pop("CG_iter", 250)
         init_damping = run_args.pop("init_damping", 45)
-        ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter,
-                                                              init_damping),
-                       test=test, test_err=ClassificationError(),
+        ff.run_batches(inputs, targets,
+                       optimizer=hf.opt.HessianFree(CG_iter, init_damping),
+                       test=test, test_err=hf.loss_funcs.ClassificationError(),
                        **run_args)
 
     output = ff.forward(test[0], ff.W)
-    print "classification error", ClassificationError().batch_loss(output,
-                                                                   test[1])
+    print ("classification error",
+           hf.loss_funcs.ClassificationError().batch_loss(output, test[1]))
 
 
 def crossentropy():
@@ -89,10 +87,11 @@ def crossentropy():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 2], layers=[Linear(), Tanh(), Softmax()],
-               loss_type=CrossEntropy())
+    ff = hf.FFNet([2, 5, 2], layers=[hf.nl.Linear(), hf.nl.Tanh(),
+                                     hf.nl.Softmax()],
+                  loss_type=hf.loss_funcs.CrossEntropy())
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
@@ -113,10 +112,10 @@ def connections():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
-    ff = FFNet([2, 5, 5, 1], layers=Tanh(),
-               conns={0: [1, 2], 1: [2, 3], 2: [3]})
+    ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(),
+                  conns={0: [1, 2], 1: [2, 3], 2: [3]})
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=2),
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
     # using gradient descent (for comparison)
@@ -138,10 +137,13 @@ def sparsity():
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
 
-    ff = FFNet([2, 8, 2], layers=[Linear(), Logistic(), Softmax()],
-               loss_type=[CrossEntropy(), SparseL1(0.1, target=0)])
+    ff = hf.FFNet([2, 8, 2], layers=[hf.nl.Linear(), hf.nl.Logistic(),
+                                     hf.nl.Softmax()],
+                  loss_type=[hf.loss_funcs.CrossEntropy(),
+                             hf.loss_funcs.SparseL1(0.1, target=0)])
+    # TODO: change this to SparseL2
 
-    ff.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=10),
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=10),
                    max_epochs=100, plotting=True)
 
     # using gradient descent (for comparison)
@@ -172,7 +174,7 @@ def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
               {'max_epochs': max_epochs, 'plotting': False, 'batch_size': 7500,
                'CG_iter': 10})
     elif func == "integrator":
-        integrator({'shape': [1, 100, 1], 'layers': Logistic(),
+        integrator({'shape': [1, 100, 1], 'layers': hf.nl.Logistic(),
                     'use_GPU': use_GPU, 'debug': False,
                     'rng': np.random.RandomState(0)},
                    {'max_epochs': max_epochs, 'plotting': False,
@@ -204,20 +206,20 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
     test = (inputs, targets)
 
     if model_args is None:
-        rnn = RNNet(shape=[1, 10, 1],
-                    layers=[Linear(), Logistic(), Logistic()],
-                    debug=False, use_GPU=False)
+        rnn = hf.RNNet(shape=[1, 10, 1], layers=hf.nl.Logistic(),
+                       debug=False, use_GPU=False)
     else:
-        rnn = RNNet(**model_args)
+        rnn = hf.RNNet(**model_args)
 
     if run_args is None:
-        rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
+        rnn.run_batches(inputs, targets,
+                        optimizer=hf.opt.HessianFree(CG_iter=100),
                         test=test, max_epochs=30, plotting=True)
     else:
         CG_iter = run_args.pop("CG_iter", 100)
         init_damping = run_args.pop("init_damping", 1)
-        rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter,
-                                                               init_damping),
+        rnn.run_batches(inputs, targets,
+                        optimizer=hf.opt.HessianFree(CG_iter, init_damping),
                         test=test, **run_args)
 
     # using gradient descent (for comparison)
@@ -248,11 +250,11 @@ def plant(plots=True):
     n_inputs = 32
     sig_len = 15
 
-    class Plant(Nonlinearity):
+    class Plant(hf.nl.Plant):
         # this plant implements a simple dynamic system, with two-dimensional
         # state representing [position, velocity]
         def __init__(self, A, B, targets, init_state):
-            super(Plant, self).__init__(stateful=True)
+            super(Plant, self).__init__()
 
             self.A = np.asarray(A)
             self.B = B
@@ -348,11 +350,13 @@ def plant(plots=True):
 
     plant = Plant(A, B, targets, init_state)
 
-    rnn = RNNet(shape=[2, 16, 2], layers=[Linear(), Tanh(), plant],
-                W_init_params={"coeff": 0.1}, W_rec_params={"coeff": 0.1},
-                rng=np.random.RandomState(0))
+    rnn = hf.RNNet(shape=[2, 16, 2], layers=[hf.nl.Linear(), hf.nl.Tanh(),
+                                             plant],
+                   W_init_params={"coeff": 0.1}, W_rec_params={"coeff": 0.1},
+                   rng=np.random.RandomState(0))
 
-    rnn.run_batches(plant, None, HessianFree(CG_iter=20, init_damping=10),
+    rnn.run_batches(plant, None, hf.opt.HessianFree(CG_iter=20,
+                                                    init_damping=10),
                     max_epochs=150, plotting=True)
 
     # using gradient descent (for comparison)

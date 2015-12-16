@@ -1,20 +1,21 @@
 from setuptools import setup
 
+with open("version.txt") as f:
+    ver = f.read().strip()
+
 with open("README.rst") as f:
     long_description = f.read()
-
-VERSION = "0.3.3"
 
 setup(
     name='hessianfree',
     packages=['hessianfree'],
-    version=VERSION,
+    version=ver,
     description='Hessian-free optimization for deep networks',
     long_description=long_description,
     author='Daniel Rasmussen',
     author_email='drasmussen@princeton.edu',
     url='https://github.com/drasmuss/hessianfree',
-    download_url='https://github.com/drasmuss/hessianfree/tarball/%s' % VERSION,
+    download_url='https://github.com/drasmuss/hessianfree/tarball/%s' % ver,
     keywords=['neural network', 'hessian free', 'deep learning'],
     license="BSD",
     classifiers=['Development Status :: 4 - Beta',

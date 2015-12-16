@@ -1,7 +1,7 @@
 """Implementation of recurrent network, including Gauss-Newton approximation
 for use in Hessian-free optimization.
 
-Author: Daniel Rasmussen (drasmussen@princeton.edu)
+.. codeauthor:: Daniel Rasmussen <drasmussen@princeton.edu>
 
 Based on
 Martens, J., & Sutskever, I. (2011). Learning recurrent neural networks with
@@ -16,27 +16,28 @@ import hessianfree as hf
 
 class RNNet(hf.FFNet):
     """Implementation of recurrent deep network (including gradient/curvature
-    computation."""
+    computation).
+
+    Note: inherits from :class:`~.FFNet`
+
+    :param list rec_layers: indices of layers with recurrent connections
+            (default is to make all except first and last layers recurrent)
+    :param dict W_rec_params: parameters used to initialize recurrent
+        weights (passed to :meth:`~.init_weights`)
+    :param tuple truncation: a tuple `(n,k)` where backpropagation through
+        time will be executed every `n` timesteps and run backwards for `k`
+        steps (defaults to full backprop if None)
+
+    See :class:`.FFNet` for the remaining parameters."""
 
     def __init__(self, shape, rec_layers=None, W_rec_params={},
                  truncation=None, **kwargs):
-        """
-        :param list rec_layers: indices of layers with recurrent connections
-            (default is to make all except first and last layers recurrent)
-        :param dict W_rec_params: parameters used to initialize recurrent
-            weights (passed to :meth:`~.init_weights`)
-        :param tuple truncation: a tuple (n,k) where backpropagation through
-            time will be executed every n timesteps and run backwards for k
-            steps (defaults to full backprop if None)
-
-        See :class:`~.FFNet` for the remaining parameters.
-        """
 
         # define recurrence for each layer (needs to be done before super
         # constructor because this is used in compute_offsets)
         if rec_layers is None:
             # assume all recurrent except first/last layer
-            rec_layers = np.arange(1, self.n_layers - 1)
+            rec_layers = np.arange(1, len(shape) - 1)
         self.rec_layers = rec_layers
 
         # super constructor
@@ -52,19 +53,27 @@ class RNNet(hf.FFNet):
                                             if l in rec_layers],
                                            **W_rec_params)))
 
-    def forward(self, input, params, deriv=False, init_activations=None,
+    def forward(self, input, params=None, deriv=False, init_activations=None,
                 init_state=None):
-        """Compute activations for given input sequence and parameters.
+        """Compute layer activations for given input and parameters.
 
-        If deriv=True then also compute the derivative of the activations.
-
-        If init_activations/init_state are set then they will be used to
-        initialize the recurrent inputs or the nonlinearity states,
-        respectively.
+        :param input: input vectors (passed to first layer)
+        :type input: :class:`~numpy:numpy.ndarray`
+        :param params: parameter vector (weights) for the network (defaults to
+            `self.W`)
+        :type params: :class:`~numpy:numpy.ndarray`
+        :param bool deriv: if True then also compute the derivative of the
+            activations
+        :param list init_activations: initial values for the activations in
+            each layer
+        :param list init_state: initial values for the internal state of any
+            stateful nonlinearities
         """
 
         # input shape = [batch_size, seq_len, input_dim]
         # activations shape = [n_layers, batch_size, seq_len, layer_size]
+
+        params = self.W if params is None else params
 
         if callable(input):
             # reset the plant
@@ -468,6 +477,8 @@ class RNNet(hf.FFNet):
         return Gv
 
     def load_GPU_data(self):
+        """Load data for the current epoch onto GPU."""
+
         from pycuda import gpuarray
 
         def split_axes(array, n=1):
@@ -522,7 +533,7 @@ class RNNet(hf.FFNet):
                            for l in self.shape]
 
     def GPU_calc_G(self, v, damping=0, out=None):
-        """Compute Gauss-Newton matrix-vector product."""
+        """Compute Gauss-Newton matrix-vector product on GPU."""
 
         from pycuda import gpuarray
 

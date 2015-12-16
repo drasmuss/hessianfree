@@ -1,7 +1,7 @@
 """Implementation of feedforward network, including Gauss-Newton approximation
 for use in Hessian-free optimization.
 
-Author: Daniel Rasmussen (drasmussen@princeton.edu)
+.. codeauthor:: Daniel Rasmussen <drasmussen@princeton.edu>
 
 Based on
 Martens, J. (2010). Deep learning via Hessian-free optimization. In Proceedings
@@ -19,27 +19,34 @@ import hessianfree as hf
 
 
 class FFNet(object):
+    """Implementation of feed-forward network (including gradient/curvature
+    computation).
+
+    :param list shape: the number of neurons in each layer
+    :param layers: nonlinearity to use in the network (or a list giving a
+        nonlinearity for each layer)
+    :type layers: :class:`~.nonlinearities.Nonlinearity` or `list`
+    :param dict conns: dictionary of the form `{layer_x:[layer_y, layer_z],
+        ...}` specifying the connections between layers (default is to
+        connect in series)
+    :param loss_type: loss function (or list of loss functions) used to
+        evaluate network
+    :type loss_type: :class:`~.loss_funcs.LossFunction` or `list`
+    :param dict W_init_params: parameters passed to :meth:`.init_weights`
+        (see parameter descriptions in that function)
+    :param bool use_GPU: run curvature computation on GPU (requires
+        PyCUDA and scikit-cuda)
+    :param load_weights: load initial weights from given array or filename
+    :type load_weights: `str` or :class:`~numpy:numpy.ndarray`
+    :param bool debug: activates expensive features to help with debugging
+    :param rng: used to generate any random numbers for this network (use
+        this to control the seed)
+    :type rng: :class:`~numpy:numpy.random.RandomState`
+    """
+
     def __init__(self, shape, layers=hf.nl.Logistic(), conns=None,
                  loss_type=hf.loss_funcs.SquaredError(), W_init_params={},
                  use_GPU=False, load_weights=None, debug=False, rng=None):
-        """Initialize the parameters of the network.
-
-        :param shape: list specifying the number of neurons in each layer
-        :param layers: nonlinearity (or list of nonlinearities) to use
-            in each layer
-        :param conns: dict of the form {layer_x:[layer_y, layer_z], ...}
-            specifying the connections between layers (default is to connect in
-            series)
-        :param loss_type: loss function (or list of loss functions) used to
-            evaluate network (see loss_funcs.py)
-        :param W_init_params: parameter dict passed to init_weights() (see
-            parameter descriptions in that function)
-        :param use_GPU: run curvature calculation on GPU (requires PyCUDA)
-        :param load_weights: load initial weights from given array or filename
-        :param debug: activates (expensive) features to help with debugging
-        :param rng: instance of np.random.RandomState() used to generate any
-            random numbers for this network (use this to control the seed)
-        """
 
         self.debug = debug
         self.shape = shape
@@ -149,28 +156,36 @@ class FFNet(object):
         self.use_GPU = use_GPU
 
     def run_batches(self, inputs, targets, optimizer,
-                    max_epochs=1000, batch_size=None, test=None,
-                    target_err=1e-6, plotting=False, test_err=None,
+                    max_epochs=1000, batch_size=None, test=None, test_err=None,
+                    target_err=1e-6, plotting=False,
                     file_output=None, print_period=10):
-        """Apply the given optimizer with a sequence of minibatches.
+        """Apply the given optimizer with a sequence of (mini)batches.
 
         :param inputs: input vectors (or a callable plant that will generate
             the input vectors dynamically)
-        :param targets: target vectors
+        :type inputs: :class:`~numpy:numpy.ndarray` or
+            :class:`~.nonlinearities.Plant`
+        :param targets: target vectors corresponding to each input vector (or
+            None if a plant is being used)
+        :type targets: :class:`~numpy:numpy.ndarray`
         :param optimizer: computes the weight update each epoch (see
             optimizers.py)
-        :param max_epochs: the maximum number of epochs to run
-        :param batch_size: the size of the minibatch to use in each epoch
-        :param test: tuple of (inputs,targets) to use as the test data (if None
-            then it will just use the same inputs and targets as training)
-        :param target_err: run will terminate if this test error is reached
-        :param plotting: if True then data from the run will be output to a
-            file, which can be displayed via dataplotter.py
+        :param int max_epochs: the maximum number of epochs to run
+        :param int batch_size: the size of the minibatch to use in each epoch
+            (or None to use full batches)
+        :param tuple test: tuple of (inputs,targets) to use as the test data
+            (if None then the same inputs and targets as training will be used)
         :param test_err: a custom error function to be applied to
             the test data (e.g., classification error)
-        :param file_output: output files from the run will use this as a prefix
-            (if None then don't output files)
-        :param print_period: print out information about the run every x epochs
+        :type test_err: :class:`~.loss_funcs.LossFunction`
+        :param float target_err: run will terminate if this test error is
+            reached
+        :param str file_output: output files from the run will use this as a
+            prefix (if None then don't output files)
+        :param bool plotting: if True then data from the run will be output to
+            a file, which can be displayed via dataplotter.py
+        :param int print_period: print out information about the run every `x`
+            epochs
         """
 
         if print_period is None:
@@ -270,6 +285,99 @@ class FFNet(object):
                 print "overfitting detected, terminating"
                 break
 
+    def forward(self, input, params=None, deriv=False):
+        """Compute layer activations for given input and parameters.
+
+        :param input: input vectors (passed to first layer)
+        :type input: :class:`~numpy:numpy.ndarray`
+        :param params: parameter vector (weights) for the network (defaults to
+            `self.W`)
+        :type params: :class:`~numpy:numpy.ndarray`
+        :param bool deriv: if True then also compute the derivative of the
+            activations
+        """
+
+        params = self.W if params is None else params
+
+        if callable(input):
+            input.reset()
+
+        activations = [None for _ in range(self.n_layers)]
+        if deriv:
+            d_activations = [None for _ in range(self.n_layers)]
+
+        for i in range(self.n_layers):
+            if i == 0:
+                if callable(input):
+                    inputs = input(None)
+                else:
+                    inputs = input
+            else:
+                inputs = np.zeros((input.shape[0], self.shape[i]),
+                                  dtype=self.dtype)
+                for pre in self.back_conns[i]:
+                    W, b = self.get_weights(params, (pre, i))
+                    inputs += np.dot(activations[pre], W)
+                    inputs += b
+                    # note: we're applying a bias on each connection to a
+                    # neuron (rather than one for each neuron). just because
+                    # it's easier than tracking how many connections there are
+                    # for each layer (but we could do it if it becomes
+                    # important).
+            activations[i] = self.layers[i].activation(inputs)
+
+            if deriv:
+                d_activations[i] = self.layers[i].d_activation(inputs,
+                                                               activations[i])
+
+        if not np.all([np.all(np.isfinite(a)) for a in activations]):
+            raise OverflowError("Non-finite nonlinearity activation value")
+
+        if deriv:
+            return activations, d_activations
+
+        return activations
+
+    def error(self, W=None, inputs=None, targets=None):
+        """Compute network error.
+
+        :param W: network parameters (defaults to `self.W`)
+        :type W: :class:`~numpy:numpy.ndarray`
+        :param inputs: input vectors (defaults to the cached (mini)batch for
+            current epoch)
+        :type inputs: :class:`~numpy:numpy.ndarray`
+        :param targets: target vectors (defaults to the cached (mini)batch for
+            current epoch)
+        :type targets: :class:`~numpy:numpy.ndarray`
+        """
+
+        W = self.W if W is None else W
+        inputs = self.inputs if inputs is None else inputs
+
+        # get outputs
+        if (W is self.W and inputs is self.inputs and
+                self.activations is not None):
+            # use cached activations
+            activations = self.activations
+        else:
+            # compute activations
+            activations = self.forward(inputs, W)
+
+        # get targets
+        if callable(inputs):
+            # get targets from plant
+            targets = inputs.get_targets()
+        else:
+            targets = self.targets if targets is None else targets
+
+        # note: np.nan can be used in the target to specify places
+        # where the target is not defined. those get translated to
+        # zero error in the loss function.
+
+        error = self.loss.batch_loss(activations, targets)
+
+        return error
+
     def cache_minibatch(self, inputs, targets, batch_size=None):
         """Pick a subset of inputs and targets to use in minibatch, and cache
         the activations for that minibatch."""
@@ -324,6 +432,8 @@ class FFNet(object):
             self.load_GPU_data()
 
     def load_GPU_data(self):
+        """Load data for the current epoch onto GPU."""
+
         from pycuda import gpuarray
 
         self.GPU_activations = [gpuarray.to_gpu(a)
@@ -335,81 +445,6 @@ class FFNet(object):
                             for a in self.d2_loss]
         self.GPU_tmp_space = [gpuarray.empty(a.shape, self.dtype)
                               for a in self.activations]
-
-    def forward(self, input, params, deriv=False):
-        """Compute layer activations for given input and parameters.
-
-        If deriv=True then also compute the derivative of the activations.
-        """
-
-        if callable(input):
-            input.reset()
-
-        activations = [None for _ in range(self.n_layers)]
-        if deriv:
-            d_activations = [None for _ in range(self.n_layers)]
-
-        for i in range(self.n_layers):
-            if i == 0:
-                if callable(input):
-                    inputs = input(None)
-                else:
-                    inputs = input
-            else:
-                inputs = np.zeros((input.shape[0], self.shape[i]),
-                                  dtype=self.dtype)
-                for pre in self.back_conns[i]:
-                    W, b = self.get_weights(params, (pre, i))
-                    inputs += np.dot(activations[pre], W)
-                    inputs += b
-                    # note: we're applying a bias on each connection to a
-                    # neuron (rather than one for each neuron). just because
-                    # it's easier than tracking how many connections there are
-                    # for each layer (but we could do it if it becomes
-                    # important).
-            activations[i] = self.layers[i].activation(inputs)
-
-            if deriv:
-                d_activations[i] = self.layers[i].d_activation(inputs,
-                                                               activations[i])
-
-        if not np.all([np.all(np.isfinite(a)) for a in activations]):
-            raise OverflowError("Non-finite nonlinearity activation value")
-
-        if deriv:
-            return activations, d_activations
-
-        return activations
-
-    def error(self, W=None, inputs=None, targets=None):
-        """Compute network error."""
-
-        W = self.W if W is None else W
-        inputs = self.inputs if inputs is None else inputs
-
-        # get outputs
-        if (W is self.W and inputs is self.inputs and
-                self.activations is not None):
-            # use cached activations
-            activations = self.activations
-        else:
-            # compute activations
-            activations = self.forward(inputs, W)
-
-        # get targets
-        if callable(inputs):
-            # get targets from plant
-            targets = inputs.get_targets()
-        else:
-            targets = self.targets if targets is None else targets
-
-        # note: np.nan can be used in the target to specify places
-        # where the target is not defined. those get translated to
-        # zero error in the loss function.
-
-        error = self.loss.batch_loss(activations, targets)
-
-        return error
 
     def J_dot(self, J, vec, transpose_J=False, out=None):
         """Compute the product of a Jacobian and some vector."""
@@ -563,6 +598,8 @@ class FFNet(object):
         return Gv
 
     def GPU_calc_G(self, v, damping=0, out=None):
+        """Compute Gauss-Newton matrix-vector product on GPU."""
+
         from pycuda import gpuarray
 
         if out is None or not isinstance(out, gpuarray.GPUArray):
@@ -690,14 +727,14 @@ class FFNet(object):
         """Weight initialization, given shapes of weight matrices.
 
         Note: coeff, biases, and init_type can be specified by the
-        W_init_params parameter in __init__.  Each can be specified as a
-        single value (for all matrices) or as a list giving a value for each
-        matrix.
+        `W_init_params` dict in :class:`.FFNet`.  Each can be
+        specified as a single value (for all matrices) or as a list giving a
+        value for each matrix.
 
-        :param shapes: list of (pre,post) shapes for each weight matrix
-        :param coeff: scales the magnitude of the connection weights
-        :param biases: bias values for the post of each matrix
-        :param init_type: type of initialization to use (currently supports
+        :param list shapes: list of (pre,post) shapes for each weight matrix
+        :param float coeff: scales the magnitude of the connection weights
+        :param float biases: bias values for the post of each matrix
+        :param str init_type: type of initialization to use (currently supports
             'sparse', 'uniform', 'gaussian')
         """
 
@@ -773,6 +810,10 @@ class FFNet(object):
         return (W.reshape((self.shape[conn[0]], self.shape[conn[1]])), b)
 
     def init_loss(self, loss_type):
+        """Set the loss type for this network to the given
+        :class:`~.loss_funcs.LossFunction` (or a list of functions can be
+        passed to create a :class:`~.loss_funcs.LossSet`)."""
+
         if isinstance(loss_type, (list, tuple)):
             tmp = loss_type
         else:

@@ -12,8 +12,8 @@ misc.init()
 
 
 def debug_wrapper(cpu_func, debug=False):
-    """Decorator used to specify a CPU function used to verify the output of
-    a GPU function."""
+    """Decorator used to specify an equivalent CPU function that can be used
+    to verify the output of a GPU function (for debugging)."""
 
     def debug_func_parametrized(gpu_func):
         @wraps(gpu_func)
@@ -82,6 +82,7 @@ def cpu_multiply(a, b, out=0, increment=False):
 # @debug_wrapper(cpu_dot, debug=True)
 def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
                increment=False, stream=None):
+    """Matrix multiplication using CUBLAS."""
 
     assert not increment or out is not None
 
@@ -135,6 +136,8 @@ def cublas_dot(a, b, out=None, transpose_a=False, transpose_b=False,
 
 # @debug_wrapper(cpu_J_dot, True)
 def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
+    """Equivalent to :meth:`~.FFNet.J_dot`, on the GPU."""
+
     if J.ndim == 2:
         return multiply(J, v, out=out, increment=increment, stream=stream)
 
@@ -187,6 +190,8 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
 
 # @debug_wrapper(cpu_sum_cols, debug=True)
 def sum_cols(a, out=None, increment=False, stream=None):
+    """Sum `a` along columns."""
+
     dtype = a.dtype
 
     if out is None:
@@ -209,6 +214,8 @@ def sum_cols(a, out=None, increment=False, stream=None):
 
 # @debug_wrapper(lambda a, b: a + b, True)
 def iadd(a, b, stream=None):
+    """In-place addition of `a` and `b`, broadcasting `b` along columns."""
+
     dtype = a.dtype
     assert a.dtype == b.dtype
 
@@ -226,6 +233,8 @@ def iadd(a, b, stream=None):
 
 # @debug_wrapper(cpu_multiply, True)
 def multiply(a, b, out=None, increment=False, stream=None):
+    """Element-wise product of `a` and `b`."""
+
     dtype = a.dtype
 
     if out is None:
@@ -248,7 +257,8 @@ def multiply(a, b, out=None, increment=False, stream=None):
 # @debug_wrapper(cpu_dot, debug=True)
 def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
                increment=False, stream=None):
-    # non-cublas matrix multiplication
+    """Matrix multiplication that doesn't rely on CUBLAS (could be swapped in
+    if scikit-cuda were not available for some reason)."""
 
     dtype = a.dtype
 

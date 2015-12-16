@@ -5,40 +5,40 @@ import numpy as np
 
 
 class Optimizer(object):
-    # note: optimizers don't actually need to inherit from this class, this
-    # just demonstrates the minimum structure that is expected
+    """Base class for optimizers.
+
+    Each optimizer has a `self.net` parameter that will be set
+    automatically when the optimizer is added to a network (referring
+    to that network)."""
+
     def __init__(self):
-        # the network will be set automatically when the optimizer is added to
-        # a network
         self.net = None
 
     def compute_update(self, printing=False):
         """Compute a weight update for the current batch.
 
-        It can be assumed that the batch has already been stored in net.inputs
-        and net.targets, and the nonlinearity activations/derivatives for
-        the batch are cached in net.activations and net.d_activations.
+        It can be assumed that the batch has already been stored in
+        `net.inputs` and `net.targets`, and the nonlinearity
+        activations/derivatives for the batch are cached in `net.activations`
+        and `net.d_activations`.
 
-        :param printing: if True, print out data about the optimization
+        :param bool printing: if True, print out data about the optimization
         """
         raise NotImplementedError()
 
 
 class HessianFree(Optimizer):
+    """Use Hessian-free optimization to compute the weight update.
+
+    :param int CG_iter: maximum number of CG iterations to run per epoch
+    :param float init_damping: the initial value of the Tikhonov damping
+    :param bool plotting: if True then collect data for plotting (actual
+        plotting handled in parent network)
+    """
+
     def __init__(self, CG_iter=250, init_damping=1, plotting=True):
-        """Use Hessian-free optimization to compute the weight update.
-
-        Based on
-        Martens, J. (2010). Deep learning via Hessian-free optimization. In
-        Proceedings of the 27th International Conference on Machine Learning.
-
-        :param CG_iter: the maximum number of CG iterations to run per epoch
-        :param init_damping: the initial value of the Tikhonov damping
-        :param plotting: if True then collect data for plotting (actual
-            plotting handled in parent network)
-        """
-
         super(HessianFree, self).__init__()
+
         self.CG_iter = CG_iter
         self.init_delta = None
         self.damping = init_damping
@@ -47,6 +47,10 @@ class HessianFree(Optimizer):
         self.plots = defaultdict(list)
 
     def compute_update(self, printing=False):
+        """Compute a weight update for the current batch.
+
+        :param bool printing: if True, print out data about the optimization
+        """
         err = self.net.error()  # note: don't reuse previous error (diff batch)
 
         # compute gradient
@@ -244,14 +248,13 @@ class HessianFree(Optimizer):
 
 
 class SGD(Optimizer):
+    """Compute weight update using first-order gradient descent.
+
+    :param l_rate: learning rate to apply to weight updates
+    :param plotting: if True then collect data for plotting (actual
+        plotting handled in parent network)"""
+
     def __init__(self, l_rate=1, plotting=False):
-        """Compute weight update using first-order gradient descent.
-
-        :param l_rate: learning rate to apply to weight updates
-        :param plotting: if True then collect data for plotting (actual
-            plotting handled in parent network)
-        """
-
         super(SGD, self).__init__()
 
         self.l_rate = l_rate
@@ -260,6 +263,10 @@ class SGD(Optimizer):
         self.plots = defaultdict(list)
 
     def compute_update(self, printing=False):
+        """Compute a weight update for the current batch.
+
+        :param bool printing: if True, print out data about the optimization
+        """
         grad = self.net.calc_grad()
 
         if self.net.debug:

@@ -14,9 +14,9 @@
   :target: https://pypi.python.org/pypi/hessianfree
   :alt: Number of PyPI downloads
 
-**************************************************
-Python implementation of Hessian-free optimization
-**************************************************
+*******************************************
+Hessian-free optimization for deep networks
+*******************************************
 
 Based on
 
@@ -94,6 +94,9 @@ optimization process.
 * Different optimizers can be swapped out for comparison (e.g., Hessian-free 
   versus SGD)
 
-The best way to understand how to use these features is to look through the 
-examples in ``demos.py``.
+Documentation
+============
+View the documentation at http://pythonhosted.org/hessianfree/
 
+In addition, examples illustrating the main features of the code can be found
+in `demos.py`.
