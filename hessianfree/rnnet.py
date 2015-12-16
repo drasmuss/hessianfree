@@ -470,7 +470,10 @@ class RNNet(hf.FFNet):
 
         return Gv
 
-    def split_axes(self, array, n=1):
+    def load_GPU_data(self):
+        from pycuda import gpuarray
+
+        def split_axes(array, n=1):
             # split a multidimensional array into a corresponding list of lists
             # along the first n axes (this is used so that array.__getitem__
             # isn't called repeatedly, as it is somewhat expensive for
@@ -478,37 +481,34 @@ class RNNet(hf.FFNet):
             if n == 1:
                 return [a for a in array]
 
-            return [self.split_axes(a, n - 1) for a in array]
-
-    def load_GPU_data(self):
-        from pycuda import gpuarray
+            return [split_axes(a, n - 1) for a in array]
 
         self.GPU_W = gpuarray.to_gpu(self.W)
 
         # rearrange GPU data so that signal is the first axis (so
         # that each time step is a single block of memory in GPU_calc_G)
         self.GPU_activations = [
-            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+            split_axes(gpuarray.to_gpu(np.ascontiguousarray(
                 np.swapaxes(a, 0, 1))), 1)
             for a in self.activations]
 
         self.GPU_d_activations = [
-            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+            split_axes(gpuarray.to_gpu(np.ascontiguousarray(
                 np.rollaxis(np.swapaxes(a, 0, 1), -1, 1))), 2)
             if self.layers[i].stateful else
-            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+            split_axes(gpuarray.to_gpu(np.ascontiguousarray(
                 np.swapaxes(a, 0, 1))), 1)
             for i, a in enumerate(self.d_activations)]
 
         self.GPU_d2_loss = [
-            self.split_axes(gpuarray.to_gpu(np.ascontiguousarray(
+            split_axes(gpuarray.to_gpu(np.ascontiguousarray(
                 np.swapaxes(a, 0, 1))), 1)
             if a is not None else None for a in self.d2_loss]
 
-        self.GPU_tmp_space = [self.split_axes(gpuarray.empty((a.shape[1],
-                                                              a.shape[0],
-                                                              a.shape[2]),
-                                                             self.dtype), 1)
+        self.GPU_tmp_space = [split_axes(gpuarray.empty((a.shape[1],
+                                                         a.shape[0],
+                                                         a.shape[2]),
+                                                        self.dtype), 1)
                               for a in self.activations]
 
         # pre-allocate calc_G arrays
@@ -600,7 +600,7 @@ class RNNet(hf.FFNet):
                     d_output = self.GPU_d_activations[l][s][2]
 
                     # note: we're doing this weird thing with two R_states
-                    # in order to avoid having to copy data
+                    # in order to avoid doing a copy every time
                     i = s % 2
                     hf.gpu.J_dot(d_state, R_states[l][i],
                                  out=R_states[l][1 - i])
