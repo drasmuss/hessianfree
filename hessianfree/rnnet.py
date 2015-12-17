@@ -15,31 +15,28 @@ import hessianfree as hf
 
 
 class RNNet(hf.FFNet):
+    """Implementation of recurrent deep network (including gradient/curvature
+    computation."""
+
     def __init__(self, shape, rec_layers=None, W_rec_params={},
                  truncation=None, **kwargs):
-        """Initialize the parameters of the network.
+        """
+        :param list rec_layers: indices of layers with recurrent connections
+            (default is to make all except first and last layers recurrent)
+        :param dict W_rec_params: parameters used to initialize recurrent
+            weights (passed to :meth:`~.init_weights`)
+        :param tuple truncation: a tuple (n,k) where backpropagation through
+            time will be executed every n timesteps and run backwards for k
+            steps (defaults to full backprop if None)
 
-        :param rec_layers: by default, all layers except the first and last
-            have a recurrent connection. A list of booleans can be passed here
-            to override that on a layer-by-layer basis.
-        :param W_rec_params: weight initialization parameter dict for recurrent
-            weights (passed to init_weights, see parameter descriptions there)
-        :param truncation: a tuple (n,k) where backpropagation through time
-            will be executed every n timesteps and run backwards for k steps
-            (defaults to full backprop if None)
-
-        See FFNet for the remaining parameters.
+        See :class:`~.FFNet` for the remaining parameters.
         """
 
         # define recurrence for each layer (needs to be done before super
         # constructor because this is used in compute_offsets)
         if rec_layers is None:
             # assume all recurrent except first/last layer
-            rec_layers = [False] + [True] * (len(shape) - 2) + [False]
-
-        if len(rec_layers) != len(shape):
-            raise ValueError("Must define recurrence for each layer")
-
+            rec_layers = np.arange(1, self.n_layers - 1)
         self.rec_layers = rec_layers
 
         # super constructor
@@ -48,11 +45,11 @@ class RNNet(hf.FFNet):
         self.truncation = truncation
 
         # add on recurrent weights
-        if kwargs.get("load_weights", None) is None and np.any(rec_layers):
+        if kwargs.get("load_weights", None) is None and len(rec_layers) > 0:
             self.W = np.concatenate(
                 (self.W, self.init_weights([(self.shape[l], self.shape[l])
                                             for l in range(self.n_layers)
-                                            if rec_layers[l]],
+                                            if l in rec_layers],
                                            **W_rec_params)))
 
     def forward(self, input, params, deriv=False, init_activations=None,
@@ -119,7 +116,7 @@ class RNNet(hf.FFNet):
                         ff_input += b
 
                 # recurrent input
-                if self.rec_layers[i]:
+                if i in self.rec_layers:
                     if s > 0:
                         rec_input = np.dot(activations[i][:, s - 1],
                                            W_recs[i][0], out=tmp_space[i])
@@ -214,7 +211,7 @@ class RNNet(hf.FFNet):
                         b_grad += np.sum(deltas[post], axis=0, out=b_tmp_grad)
 
                     # add recurrent error
-                    if self.rec_layers[l]:
+                    if l in self.rec_layers:
                         error[l] += np.dot(deltas[l], W_recs[l][0].T,
                                            out=tmp_act[l])
 
@@ -236,7 +233,7 @@ class RNNet(hf.FFNet):
                                    out=state_deltas[l])
 
                     # gradient for recurrent weights
-                    if self.rec_layers[l]:
+                    if l in self.rec_layers:
                         W_grad, b_grad = self.get_weights(grad, (l, l))
                         W_tmp_grad, b_tmp_grad = self.get_weights(tmp_grad,
                                                                   (l, l))
@@ -369,7 +366,7 @@ class RNNet(hf.FFNet):
                                     out=tmp_act[l])
 
                 # recurrent input
-                if self.rec_layers[l]:
+                if l in self.rec_layers:
                     if s == 0:
                         # bias input on first step
                         R_act += v_recs[l][1]
@@ -432,7 +429,7 @@ class RNNet(hf.FFNet):
                         b_g += np.sum(R_deltas[post], axis=0, out=b_tmp_grad)
 
                     # add recurrent error
-                    if self.rec_layers[l]:
+                    if l in self.rec_layers:
                         R_error[l] += np.dot(R_deltas[l], W_recs[l][0].T,
                                              out=tmp_act[l])
 
@@ -454,7 +451,7 @@ class RNNet(hf.FFNet):
                                    out=R_states[l])
 
                     # recurrent gradient
-                    if self.rec_layers[l]:
+                    if l in self.rec_layers:
                         W_g, b_g = Gv_recs[l]
                         W_tmp_grad, b_tmp_grad = self.get_weights(tmp_grad,
                                                                   (l, l))
@@ -578,7 +575,7 @@ class RNNet(hf.FFNet):
                                out=R_act, increment=True)
 
                 # recurrent input
-                if self.rec_layers[l]:
+                if l in self.rec_layers:
                     if s == 0:
                         # bias input on first step
                         hf.gpu.iadd(R_act, v_recs[l][1])
@@ -645,7 +642,7 @@ class RNNet(hf.FFNet):
                                         increment=True)
 
                     # add recurrent error
-                    if self.rec_layers[l]:
+                    if l in self.rec_layers:
                         hf.gpu.dot(R_deltas[l], W_recs[l][0], out=R_error[l],
                                    transpose_b=True, increment=True)
 
@@ -667,7 +664,7 @@ class RNNet(hf.FFNet):
                                      out=R_states[l][1 - i], transpose_J=True)
 
                     # recurrent gradient
-                    if self.rec_layers[l]:
+                    if l in self.rec_layers:
                         if s > 0:
                             hf.gpu.dot(self.GPU_activations[l][s - 1],
                                        R_deltas[l], out=Gv_recs[l][0],
@@ -788,7 +785,7 @@ class RNNet(hf.FFNet):
         # offset for recurrent weights is end of ff weights
         offset = ff_offset
         for l in range(self.n_layers):
-            if self.rec_layers[l]:
+            if l in self.rec_layers:
                 self.offsets[(l, l)] = (
                     offset,
                     offset + self.shape[l] * self.shape[l],
