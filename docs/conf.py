@@ -19,7 +19,6 @@ extensions = [
     'sphinx.ext.intersphinx'
 ]
 
-templates_path = ['_templates']
 source_suffix = '.rst'
 master_doc = 'index'
 language = None
@@ -40,7 +39,6 @@ html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 # html_theme_options = {}
 
 html_context = {'show_source': False}
-html_static_path = ['_static']
 htmlhelp_basename = 'hessianfreedoc'
 html_show_sphinx = False
 html_use_smartypants = True

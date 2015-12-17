@@ -3,4 +3,5 @@ global-include *.cu
 include *.rst
 include *.txt
 
-prune docs
+graft docs
+prune docs/_build
