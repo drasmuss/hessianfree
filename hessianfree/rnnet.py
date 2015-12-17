@@ -18,8 +18,6 @@ class RNNet(hf.FFNet):
     """Implementation of recurrent deep network (including gradient/curvature
     computation).
 
-    Note: inherits from :class:`~.FFNet`
-
     :param list rec_layers: indices of layers with recurrent connections
             (default is to make all except first and last layers recurrent)
     :param dict W_rec_params: parameters used to initialize recurrent

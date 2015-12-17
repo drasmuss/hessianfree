@@ -26,7 +26,7 @@ exclude_patterns = ['_build']
 pygments_style = 'sphinx'
 todo_include_todos = True
 show_authors = False
-autodoc_default_flags = ['members', 'undoc-members']
+autodoc_default_flags = ['members', 'undoc-members', 'show-inheritance']
 autodoc_member_order = 'bysource'
 intersphinx_mapping = {'numpy': ('http://docs.scipy.org/doc/numpy/', None),
                        'scipy': ('http://docs.scipy.org/doc/scipy/reference/',

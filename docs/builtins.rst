@@ -15,4 +15,4 @@ Loss functions
 --------------
 
 .. automodule:: hessianfree.loss_funcs
-
+   :no-undoc-members:
