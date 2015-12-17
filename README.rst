@@ -95,8 +95,10 @@ optimization process.
   versus SGD)
 
 Documentation
-============
+=============
+
 View the documentation at http://pythonhosted.org/hessianfree/
 
 In addition, examples illustrating the main features of the code can be found
 in `demos.py`.
+
