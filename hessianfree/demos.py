@@ -177,8 +177,7 @@ def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
         integrator({'shape': [1, 100, 1], 'layers': hf.nl.Logistic(),
                     'use_GPU': use_GPU, 'debug': False,
                     'rng': np.random.RandomState(0)},
-                   {'max_epochs': max_epochs, 'plotting': False,
-                    'CG_iter': 10},
+                   {'max_epochs': max_epochs, 'CG_iter': 10},
                    n_inputs=500, sig_len=200, plots=False)
     else:
         raise ValueError("Unknown profile function")
@@ -214,13 +213,13 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
     if run_args is None:
         rnn.run_batches(inputs, targets,
                         optimizer=hf.opt.HessianFree(CG_iter=100),
-                        test=test, max_epochs=30, plotting=True)
+                        test=test, max_epochs=30, plotting=plots)
     else:
         CG_iter = run_args.pop("CG_iter", 100)
         init_damping = run_args.pop("init_damping", 1)
         rnn.run_batches(inputs, targets,
                         optimizer=hf.opt.HessianFree(CG_iter, init_damping),
-                        test=test, **run_args)
+                        test=test, plotting=plots, **run_args)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
@@ -239,6 +238,64 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
         outputs = rnn.forward(inputs, rnn.W)[-1]
         plt.figure()
         plt.plot(outputs.squeeze().T)
+        plt.title("outputs")
+
+        plt.show()
+
+
+def adding(T=50, plots=True):
+    """The canonical "adding" test of long-range dependency learning for RNNs.
+    """
+
+    # set up inputs
+    N = 100000
+    test_cut = int(N * 0.9)
+
+    vals = np.random.uniform(0, 1, size=(N, T, 1)).astype(np.float32)
+    mask = np.zeros((N, T, 1), dtype=np.float32)
+    for m in mask:
+        m[np.random.randint(T / 10)] = 1
+        m[np.random.randint(T / 10, T / 2)] = 1
+    inputs = np.concatenate((vals, mask), axis=-1)
+
+    tmp = np.zeros_like(vals)
+    tmp[mask.astype(np.bool)] = vals[mask.astype(np.bool)]
+
+    targets = np.zeros((N, T, 1), dtype=np.float32)
+    targets[:] = np.nan
+    targets[:, -1] = np.sum(tmp, axis=1, dtype=np.float32)
+
+    test = (inputs[test_cut:], targets[test_cut:])
+
+    # build network
+    optimizer = hf.opt.HessianFree(CG_iter=60, init_damping=20)
+    W_init_params = {"coeff": 0.25}
+    rnn = hf.RNNet(
+        shape=[2, 32, 64, 1],
+        layers=[hf.nl.Linear(), hf.nl.ReLU(),
+                hf.nl.Continuous(hf.nl.ReLU(), tau=20), hf.nl.ReLU()],
+        W_init_params=W_init_params,
+        loss_type=[hf.loss_funcs.SquaredError(),
+                   hf.loss_funcs.StructuralDamping(1e-4, layers=[2],
+                                                   optimizer=optimizer)],
+        rec_layers=[2], use_GPU=True, debug=False,
+        rng=np.random.RandomState(0))
+
+    # scale spectral radius of recurrent weights
+    W, _ = rnn.get_weights(rnn.W, (2, 2))
+    W *= 1.0 / np.max(np.abs(np.linalg.eigvals(W)))
+
+    rnn.run_batches(inputs[:test_cut], targets[:test_cut],
+                    optimizer=optimizer, batch_size=1024, test=test,
+                    max_epochs=50, plotting=plots,
+                    test_err=hf.loss_funcs.SquaredError())
+
+    if plots:
+        outputs = rnn.forward(inputs[:20], rnn.W)
+        plt.figure()
+        lines = plt.plot(outputs[-1][:].squeeze().T)
+        plt.scatter(np.ones(outputs[-1].shape[0]) * outputs[-1].shape[1],
+                    targets[:20, -1], c=[plt.getp(l, "color") for l in lines])
         plt.title("outputs")
 
         plt.show()
@@ -357,7 +414,7 @@ def plant(plots=True):
 
     rnn.run_batches(plant, None, hf.opt.HessianFree(CG_iter=20,
                                                     init_damping=10),
-                    max_epochs=150, plotting=True)
+                    max_epochs=150, plotting=plots)
 
     # using gradient descent (for comparison)
 #     rnn.run_batches(plant, None, optimizer=SGD(l_rate=0.01),

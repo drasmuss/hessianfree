@@ -18,7 +18,7 @@ pycuda.autoinit.context.set_shared_config(
 
 DTYPES = ["double", "float"]
 
-streams = [pycuda.driver.Stream() for _ in range(16)]
+# streams = [pycuda.driver.Stream() for _ in range(16)]
 
 
 def parse_kernels():
