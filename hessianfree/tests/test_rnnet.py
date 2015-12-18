@@ -3,8 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import hessianfree as hf
-from hessianfree.nonlinearities import (Logistic, Continuous, Tanh, Linear,
-                                        Nonlinearity)
+from hessianfree.nonlinearities import Logistic, Continuous, Tanh, Linear
 from hessianfree.optimizers import HessianFree
 from hessianfree.tests import use_GPU
 
@@ -44,12 +43,15 @@ def test_strucdamping(use_GPU):
     inputs = inputs.astype(np.float32)
     targets = targets.astype(np.float32)
 
-    rnn = hf.RNNet(shape=[1, 5, 1],
-                   loss_type=[hf.loss_funcs.SquaredError(),
-                              hf.loss_funcs.StructuralDamping(0.05)],
-                   debug=True, use_GPU=use_GPU)
+    optimizer = HessianFree(CG_iter=100)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
+    rnn = hf.RNNet(
+        shape=[1, 5, 1],
+        loss_type=[hf.loss_funcs.SquaredError(),
+                   hf.loss_funcs.StructuralDamping(0.1, optimizer=optimizer)],
+        debug=True, use_GPU=use_GPU)
+
+    rnn.run_batches(inputs, targets, optimizer=optimizer,
                     max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
@@ -109,7 +111,7 @@ def test_plant(use_GPU):
     n_inputs = 32
     sig_len = 15
 
-    class Plant(Nonlinearity):
+    class Plant(hf.nl.Plant):
         # this plant implements a simple dynamic system, with two-dimensional
         # state representing [position, velocity]
         def __init__(self, A, B, targets, init_state):
@@ -199,8 +201,10 @@ def test_plant(use_GPU):
 
         return B, d_B
 
-    # random initial position and velocity
-    init_state = np.random.uniform(-0.5, 0.5, size=(n_inputs, 2))
+    # initial position and random velocity
+    init_state = np.zeros((n_inputs, 2))
+    init_state[:, 0] = np.linspace(-1, 1, n_inputs)
+    init_state[:, 1] = np.random.uniform(-0.2, 0.2, size=n_inputs)
 
     # the target will be to end at position 1 with velocity 0
     targets = np.ones((n_inputs, sig_len, 2), dtype=np.float32)
