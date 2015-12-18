@@ -58,7 +58,7 @@ class RNNet(hf.FFNet):
         :param input: input vectors (passed to first layer)
         :type input: :class:`~numpy:numpy.ndarray`
         :param params: parameter vector (weights) for the network (defaults to
-            `self.W`)
+            ``self.W``)
         :type params: :class:`~numpy:numpy.ndarray`
         :param bool deriv: if True then also compute the derivative of the
             activations

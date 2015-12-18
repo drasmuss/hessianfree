@@ -63,9 +63,9 @@ Assumes default installation locations, adjust as appropriate.
 
 5. Add the following to system path: 
 
-   | ``C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\amd64;``
-   | ``C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin;``
-   | ``C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE;``
+   ::
+   
+      C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\amd64;C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin;C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE;
 
 6. Install CUDA (http://docs.nvidia.com/cuda/cuda-getting-started-guide-for-microsoft-windows/#axzz3RTeEcNTV)
 
@@ -76,7 +76,9 @@ Assumes default installation locations, adjust as appropriate.
    * open ``nvcc.profile``
    * change the line starting with INCLUDES to:   
    
-     | INCLUDES        +=  "-I$(TOP)/include" "-I$(TOP)/include/cudart" "-IC:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include" $(_SPACE_)``
+   ::
+   
+      INCLUDES        +=  "-I$(TOP)/include" "-I$(TOP)/include/cudart" "-IC:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include" $(_SPACE_)``
 
 8. Install PyCUDA
 

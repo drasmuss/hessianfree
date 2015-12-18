@@ -248,7 +248,7 @@ class Continuous(Nonlinearity):
         return d_act
 
     def reset(self, init=None):
-        """Reset state to zero (or `init`)."""
+        """Reset state to zero (or ``init``)."""
 
         self.state = None if init is None else init.copy()
         self.act_count = 0

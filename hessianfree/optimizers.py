@@ -7,7 +7,7 @@ import numpy as np
 class Optimizer(object):
     """Base class for optimizers.
 
-    Each optimizer has a `self.net` parameter that will be set
+    Each optimizer has a ``self.net`` parameter that will be set
     automatically when the optimizer is added to a network (referring
     to that network)."""
 
@@ -18,9 +18,9 @@ class Optimizer(object):
         """Compute a weight update for the current batch.
 
         It can be assumed that the batch has already been stored in
-        `net.inputs` and `net.targets`, and the nonlinearity
-        activations/derivatives for the batch are cached in `net.activations`
-        and `net.d_activations`.
+        ``net.inputs`` and ``net.targets``, and the nonlinearity
+        activations/derivatives for the batch are cached in ``net.activations``
+        and ``net.d_activations``.
 
         :param bool printing: if True, print out data about the optimization
         """

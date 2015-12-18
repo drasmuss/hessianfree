@@ -214,7 +214,7 @@ def test_plant(use_GPU):
                    use_GPU=use_GPU, rng=np.random.RandomState(0), debug=False)
 
     rnn.run_batches(plant, None, HessianFree(CG_iter=20, init_damping=10),
-                    max_epochs=150, plotting=True)
+                    max_epochs=150, plotting=True, print_period=None)
 
     outputs = rnn.forward(plant, rnn.W)
 

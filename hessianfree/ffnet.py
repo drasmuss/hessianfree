@@ -291,7 +291,7 @@ class FFNet(object):
         :param input: input vectors (passed to first layer)
         :type input: :class:`~numpy:numpy.ndarray`
         :param params: parameter vector (weights) for the network (defaults to
-            `self.W`)
+            ``self.W``)
         :type params: :class:`~numpy:numpy.ndarray`
         :param bool deriv: if True then also compute the derivative of the
             activations
@@ -341,7 +341,7 @@ class FFNet(object):
     def error(self, W=None, inputs=None, targets=None):
         """Compute network error.
 
-        :param W: network parameters (defaults to `self.W`)
+        :param W: network parameters (defaults to ``self.W``)
         :type W: :class:`~numpy:numpy.ndarray`
         :param inputs: input vectors (defaults to the cached (mini)batch for
             current epoch)

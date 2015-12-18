@@ -15,7 +15,7 @@ class LossFunction:
         sparsity constraints. Targets, however, are only defined for the
         output layer.
 
-        Targets can be defined as `np.nan`, which will be translated
+        Targets can be defined as ``np.nan``, which will be translated
         into zero error.
 
         :param list activities: output activations of each layer
@@ -98,10 +98,10 @@ class CrossEntropy(LossFunction):
 class ClassificationError(LossFunction):
     """Classification error
 
-    :math:`argmax(output) != argmax(target)`
+    :math:`argmax(output) \\neq argmax(target)`
 
-    Note: `d_loss` and `d2_loss` are not defined; classification error should
-    only be used for validation, which doesn't require either.
+    Note: ``d_loss`` and ``d2_loss`` are not defined; classification error
+    should only be used for validation, which doesn't require either.
     """
 
     @output_loss
@@ -117,13 +117,13 @@ class StructuralDamping(LossFunction):
     Note: this is not exactly the same as the structural damping in
     Martens (2010), because it is applied on the output side of the
     nonlinearity (meaning that this error will be filtered through
-    `d_activations` during the backwards propagation).
+    ``d_activations`` during the backwards propagation).
 
     :param float weight: scale on structural damping relative to other losses
     :param list layers: indices specifying which layers will have the
         damping applied (defaults to all except first/last layers)
     :param optimizer: if provided, the weight on structural damping will be
-        scaled relative to the `damping` attribute in the optimizer
+        scaled relative to the ``damping`` attribute in the optimizer
         (so that any processes dynamically adjusting the damping during the
         optimization will also affect the structural damping)
     :type optimizer: :class:`~hessianfree.optimizers.Optimizer`
