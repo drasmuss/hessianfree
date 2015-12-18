@@ -380,6 +380,8 @@ __global__ void mv_batched_%float_type%_%transpose_a%(
         if (active && block_index < limit)
             sum += A[block_index] * v_share[v_index];
         block_index += offset_step;
+        
+        __syncthreads();
     }
     data[data_offset] = sum;
     
