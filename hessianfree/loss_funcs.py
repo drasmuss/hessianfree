@@ -106,8 +106,10 @@ class ClassificationError(LossFunction):
 
     @output_loss
     def loss(self, output, targets):
-        return (np.argmax(output, axis=-1) !=
-                np.argmax(np.nan_to_num(targets), axis=-1))
+        return np.logical_and(np.argmax(output, axis=-1) !=
+                              np.argmax(targets, axis=-1),
+                              np.logical_not(np.isnan(np.sum(targets,
+                                                             axis=-1))))
 
 
 class StructuralDamping(LossFunction):

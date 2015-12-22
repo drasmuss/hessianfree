@@ -281,7 +281,7 @@ class FFNet(object):
             if test_errs[-1] < target_err:
                 print "target error reached"
                 break
-            if test is not None and i > 20 and test_errs[-10] < test_errs[-1]:
+            if test is not None and i > 20 and test_errs[-20] < test_errs[-1]:
                 print "overfitting detected, terminating"
                 break
 

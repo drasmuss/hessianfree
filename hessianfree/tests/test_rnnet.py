@@ -201,10 +201,9 @@ def test_plant(use_GPU):
 
         return B, d_B
 
-    # initial position and random velocity
+    # initial position
     init_state = np.zeros((n_inputs, 2))
     init_state[:, 0] = np.linspace(-1, 1, n_inputs)
-    init_state[:, 1] = np.random.uniform(-0.2, 0.2, size=n_inputs)
 
     # the target will be to end at position 1 with velocity 0
     targets = np.ones((n_inputs, sig_len, 2), dtype=np.float32)
