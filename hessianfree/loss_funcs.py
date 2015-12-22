@@ -133,7 +133,8 @@ class StructuralDamping(LossFunction):
 
     def __init__(self, weight, layers=None, optimizer=None):
         self.weight = weight
-        self.layers = np.index_exp[1:-1] if layers is None else layers
+        self.layers = (np.index_exp[1:-1] if layers is None else
+                       np.asarray(layers))
         self.opt = optimizer
 
     def loss(self, activities, _):
