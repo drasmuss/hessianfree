@@ -1,6 +1,6 @@
 import imp
 import os
-from setuptools import setup
+from setuptools import setup, find_packages
 
 ver = imp.load_source('version',
                       os.path.join(os.path.dirname(__file__), 'hessianfree',
@@ -11,7 +11,8 @@ with open("README.rst") as f:
 
 setup(
     name='hessianfree',
-    packages=['hessianfree'],
+    packages=find_packages(),
+    package_data={'': ['*.cu']},
     version=ver,
     description='Hessian-free optimization for deep networks',
     long_description=long_description,
