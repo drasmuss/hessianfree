@@ -12,7 +12,5 @@ from hessianfree import nonlinearities as nl
 from hessianfree import optimizers as opt
 from hessianfree.ffnet import FFNet
 from hessianfree.rnnet import RNNet
+from hessianfree.version import __version__
 from hessianfree import demos
-
-with open(os.path.join(os.path.dirname(__file__), "..", "version.txt")) as f:
-    __version__ = f.read().strip()

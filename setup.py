@@ -1,7 +1,10 @@
+import imp
+import os
 from setuptools import setup
 
-with open("version.txt") as f:
-    ver = f.read().strip()
+ver = imp.load_source('version',
+                      os.path.join(os.path.dirname(__file__), 'hessianfree',
+                                   'version.py')).__version__
 
 with open("README.rst") as f:
     long_description = f.read()

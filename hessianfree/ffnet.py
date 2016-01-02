@@ -188,11 +188,6 @@ class FFNet(object):
             epochs
         """
 
-        if print_period is None:
-            print_period = max_epochs
-        elif self.debug:
-            print_period = 1
-
         test_errs = []
         self.best_W = None
         self.best_error = None
@@ -202,8 +197,10 @@ class FFNet(object):
 
         for i in range(max_epochs):
             self.epoch = i
+            printing = self.debug or (print_period is not None and
+                                      i % print_period == 0)
 
-            if i % print_period == 0:
+            if printing:
                 print "=" * 40
                 print "batch", i
 
@@ -224,7 +221,7 @@ class FFNet(object):
             assert np.all([np.all(np.isfinite(a)) for a in self.activations])
 
             # compute update
-            update = optimizer.compute_update(i % print_period == 0)
+            update = optimizer.compute_update(printing)
 
             assert update.dtype == self.dtype
 
@@ -253,7 +250,7 @@ class FFNet(object):
                 err = test_err.batch_loss(output, test_t)
             test_errs += [err]
 
-            if i % print_period == 0:
+            if printing:
                 print "test error", test_errs[-1]
 
             # save the weights with the best error
