@@ -10,22 +10,28 @@ import matplotlib.pyplot as plt
 import hessianfree as hf
 
 
-def xor():
-    """Run a basic xor training test."""
+def xor(use_hf=True):
+    """Run a basic xor training test.
+
+    :param bool use_hf: if True run example using Hessian-free optimization,
+        otherwise use stochastic gradient descent
+    """
 
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
 
     ff = hf.FFNet([2, 5, 1])
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, plotting=True)
+    if use_hf:
+        ff.run_batches(inputs, targets,
+                       optimizer=hf.opt.HessianFree(CG_iter=2),
+                       max_epochs=40, plotting=True)
+    else:
+        # using gradient descent (for comparison)
+        ff.run_batches(inputs, targets, optimizer=hf.opt.SGD(l_rate=1),
+                       max_epochs=10000, plotting=True)
 
-    # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
-#                    max_epochs=10000, plotting=True)
-
-    outputs = ff.forward(inputs, ff.W)[-1]
+    outputs = ff.forward(inputs)[-1]
     for i in range(4):
         print "-" * 20
         print "input", inputs[i]
@@ -34,9 +40,15 @@ def xor():
 
 
 def mnist(model_args=None, run_args=None):
-    """Test on the MNIST (digit classification) dataset."""
+    """Test on the MNIST (digit classification) dataset.
 
-    # download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
+    Download dataset at http://deeplearning.net/data/mnist/mnist.pkl.gz
+
+    :param dict model_args: kwargs that will be passed to the :class:`.FFNet`
+        constructor
+    :param dict run_args: kwargs that will be passed to :meth:`.run_batches`
+    """
+
     with open("mnist.pkl", "rb") as f:
         train, _, test = pickle.load(f)
 
@@ -76,13 +88,13 @@ def mnist(model_args=None, run_args=None):
                        test=test, test_err=hf.loss_funcs.ClassificationError(),
                        **run_args)
 
-    output = ff.forward(test[0], ff.W)
+    output = ff.forward(test[0])
     print ("classification error",
            hf.loss_funcs.ClassificationError().batch_loss(output, test[1]))
 
 
 def crossentropy():
-    """Example of a network using cross-entropy error."""
+    """A network that modifies the layer types and loss function."""
 
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
@@ -94,11 +106,7 @@ def crossentropy():
     ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
-    # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
-#                    max_epochs=10000, plotting=True)
-
-    outputs = ff.forward(inputs, ff.W)[-1]
+    outputs = ff.forward(inputs)[-1]
     for i in range(4):
         print "-" * 20
         print "input", inputs[i]
@@ -107,7 +115,7 @@ def crossentropy():
 
 
 def connections():
-    """Example of a network with non-standard connectivity between layers."""
+    """A network with non-standard connectivity between layers."""
 
     inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
     targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
@@ -118,11 +126,7 @@ def connections():
     ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
                    max_epochs=40, plotting=True)
 
-    # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1),
-#                    max_epochs=10000, plotting=True)
-
-    outputs = ff.forward(inputs, ff.W)[-1]
+    outputs = ff.forward(inputs)[-1]
     for i in range(4):
         print "-" * 20
         print "input", inputs[i]
@@ -130,70 +134,17 @@ def connections():
         print "output", outputs[i]
 
 
-def sparsity():
-    """Example of a network with a loss function imposing sparsity on the
-    neural activities."""
-
-    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
-    targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
-
-    ff = hf.FFNet([2, 8, 2], layers=[hf.nl.Linear(), hf.nl.Logistic(),
-                                     hf.nl.Softmax()],
-                  loss_type=[hf.loss_funcs.CrossEntropy(),
-                             hf.loss_funcs.SparseL1(0.1, target=0)])
-    # TODO: change this to SparseL2
-
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=10),
-                   max_epochs=100, plotting=True)
-
-    # using gradient descent (for comparison)
-#     ff.run_batches(inputs, targets, optimizer=SGD(l_rate=1.0),
-#                    max_epochs=10000, plotting=True)
-
-    output = ff.forward(inputs, ff.W)
-    for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", output[-1][i]
-        print "activity", np.mean(output[1][i])
-
-
-def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
-    """Run a profiler on the code."""
-
-    if cprofile:
-        p = Profile()
-        p.enable()
-    else:
-        import pycuda
-        pycuda.driver.start_profiler()
-
-    if func == "mnist":
-        mnist({'use_GPU': use_GPU, 'rng': np.random.RandomState(0)},
-              {'max_epochs': max_epochs, 'plotting': False, 'batch_size': 7500,
-               'CG_iter': 10})
-    elif func == "integrator":
-        integrator({'shape': [1, 100, 1], 'layers': hf.nl.Logistic(),
-                    'use_GPU': use_GPU, 'debug': False,
-                    'rng': np.random.RandomState(0)},
-                   {'max_epochs': max_epochs, 'CG_iter': 10},
-                   n_inputs=500, sig_len=200, plots=False)
-    else:
-        raise ValueError("Unknown profile function")
-
-    if cprofile:
-        p.disable()
-
-        ps = pstats.Stats(p)
-        ps.strip_dirs().sort_stats('time').print_stats(20)
-    else:
-        pycuda.driver.stop_profiler()
-
-
 def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
                plots=True):
-    """Example of a recurrent network, implementing an integrator."""
+    """A recurrent network implementing an integrator.
+
+    :param dict model_args: kwargs that will be passed to the :class:`.RNNet`
+        constructor
+    :param dict run_args: kwargs that will be passed to :meth:`.run_batches`
+    :param int n_inputs: size of batch to train on
+    :param int sig_len: number of timesteps to run for
+    :param bool plots: display plots of trained output
+    """
 
     inputs = np.outer(np.linspace(0.1, 0.9, n_inputs),
                       np.ones(sig_len))[:, :, None]
@@ -221,11 +172,6 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
                         optimizer=hf.opt.HessianFree(CG_iter, init_damping),
                         test=test, plotting=plots, **run_args)
 
-    # using gradient descent (for comparison)
-#     rnn.run_batches(inputs, targets, optimizer=SGD(l_rate=0.1),
-#                     batch_size=None, test=test, max_epochs=10000,
-#                     plotting=True)
-
     if plots:
         plt.figure()
         plt.plot(inputs.squeeze().T)
@@ -235,7 +181,7 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
         plt.plot(targets.squeeze().T)
         plt.title("targets")
 
-        outputs = rnn.forward(inputs, rnn.W)[-1]
+        outputs = rnn.forward(inputs)[-1]
         plt.figure()
         plt.plot(outputs.squeeze().T)
         plt.title("outputs")
@@ -245,6 +191,9 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
 
 def adding(T=50, plots=True):
     """The canonical "adding" test of long-range dependency learning for RNNs.
+
+    :param int T: length of the test signal
+    :param bool plots: display plots of trained output
     """
 
     # set up inputs
@@ -269,12 +218,11 @@ def adding(T=50, plots=True):
 
     # build network
     optimizer = hf.opt.HessianFree(CG_iter=60, init_damping=20)
-    W_init_params = {"coeff": 0.25}
     rnn = hf.RNNet(
         shape=[2, 32, 64, 1],
         layers=[hf.nl.Linear(), hf.nl.ReLU(),
                 hf.nl.Continuous(hf.nl.ReLU(), tau=20), hf.nl.ReLU()],
-        W_init_params=W_init_params,
+        W_init_params={"coeff": 0.25},
         loss_type=[hf.loss_funcs.SquaredError(),
                    hf.loss_funcs.StructuralDamping(1e-4, layers=[2],
                                                    optimizer=optimizer)],
@@ -291,7 +239,7 @@ def adding(T=50, plots=True):
                     test_err=hf.loss_funcs.SquaredError())
 
     if plots:
-        outputs = rnn.forward(inputs[:20], rnn.W)
+        outputs = rnn.forward(inputs[:20])
         plt.figure()
         lines = plt.plot(outputs[-1][:].squeeze().T)
         plt.scatter(np.ones(outputs[-1].shape[0]) * outputs[-1].shape[1],
@@ -302,7 +250,10 @@ def adding(T=50, plots=True):
 
 
 def plant(plots=True):
-    """Example of a network using a dynamic plant as the output layer."""
+    """A network using a dynamic plant as the output layer.
+
+    :param bool plots: display plots of trained output
+    """
 
     n_inputs = 32
     sig_len = 15
@@ -422,7 +373,7 @@ def plant(plots=True):
 #                     plotting=True)
 
     if plots:
-        outputs = rnn.forward(plant, rnn.W)[-1]
+        outputs = rnn.forward(plant)[-1]
 
         plt.figure()
         plt.plot(outputs[:, :, 0].squeeze().T)
@@ -433,6 +384,46 @@ def plant(plots=True):
         plt.title("velocity")
 
         plt.show()
+
+
+def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
+    """Run a profiler on the code.
+
+    :param str func: the demo function to be profiled (can be 'mnist' or
+        'integrator')
+    :param int max_epochs: maximum number of iterations to run
+    :param bool use_GPU: run optimization on GPU
+    :param bool cprofile: if True then run the profiling on the CPU, otherwise
+        use CUDA profiler
+    """
+
+    if cprofile:
+        p = Profile()
+        p.enable()
+    else:
+        import pycuda
+        pycuda.driver.start_profiler()
+
+    if func == "mnist":
+        mnist({'use_GPU': use_GPU, 'rng': np.random.RandomState(0)},
+              {'max_epochs': max_epochs, 'plotting': False, 'batch_size': 7500,
+               'CG_iter': 10})
+    elif func == "integrator":
+        integrator({'shape': [1, 100, 1], 'layers': hf.nl.Logistic(),
+                    'use_GPU': use_GPU, 'debug': False,
+                    'rng': np.random.RandomState(0)},
+                   {'max_epochs': max_epochs, 'CG_iter': 10},
+                   n_inputs=500, sig_len=200, plots=False)
+    else:
+        raise ValueError("Unknown profile function")
+
+    if cprofile:
+        p.disable()
+
+        ps = pstats.Stats(p)
+        ps.strip_dirs().sort_stats('time').print_stats(20)
+    else:
+        pycuda.driver.stop_profiler()
 
 
 if __name__ == "__main__":

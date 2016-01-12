@@ -5,8 +5,9 @@ class Nonlinearity(object):
     """Base class for layer nonlinearities.
 
     :param boolean stateful: True if this nonlinearity has internal state
-        (in which case it needs to return d_input, d_state, and d_output in
-        :meth:`d_activation`; see :class:`Continuous` for an example)
+        (in which case it needs to return ``d_input``, ``d_state``, and
+        ``d_output`` in :meth:`d_activation`; see :class:`Continuous` for an
+        example)
     """
 
     def __init__(self, stateful=False):
@@ -24,7 +25,7 @@ class Nonlinearity(object):
         """Derivative of the nonlinearity with respect to the inputs.
 
         :param x: input to the nonlinearity
-        :param a: output of :meth:`activation(x)` (can be used to more
+        :param a: output of ``activation(x)`` (can be used to more
             efficiently compute the derivative for some nonlinearities)"""
 
         raise NotImplementedError()
@@ -137,7 +138,7 @@ class SoftLIF(Nonlinearity):
     """SoftLIF activation function
 
     Based on
-    Hunsberger, E. and Eliasmith, C. (2010). Spiking deep networks with LIF
+    Hunsberger, E. and Eliasmith, C. (2015). Spiking deep networks with LIF
     neurons. arXiv:1510.08829.
 
     .. math::
@@ -148,7 +149,7 @@ class SoftLIF(Nonlinearity):
     Note: this is equivalent to :math:`LIF(SoftReLU(x))`
 
     :param float sigma: controls the smoothness of the nonlinearity threshold
-    :param float tau_RC: LIF RC time constant
+    :param float tau_rc: LIF RC time constant
     :param float tau_ref: LIF refractory time constant
     :param float amp: scales output of nonlinearity
     """
@@ -259,7 +260,7 @@ class Plant(Nonlinearity):
         """Base class for a plant that can be called to dynamically generate
         inputs for a network.
 
-        See :func:`hessianfree.demos.plant` for an example of this being used
+        See :func:`.demos.plant` for an example of this being used
         in practice."""
 
         def __init__(self, stateful=True):

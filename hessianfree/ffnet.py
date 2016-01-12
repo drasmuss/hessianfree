@@ -161,8 +161,8 @@ class FFNet(object):
                     file_output=None, print_period=10):
         """Apply the given optimizer with a sequence of (mini)batches.
 
-        :param inputs: input vectors (or a callable plant that will generate
-            the input vectors dynamically)
+        :param inputs: input vectors (or a :class:`~.nonlinearities.Plant` that
+            will generate the input vectors dynamically)
         :type inputs: :class:`~numpy:numpy.ndarray` or
             :class:`~.nonlinearities.Plant`
         :param targets: target vectors corresponding to each input vector (or
@@ -298,7 +298,7 @@ class FFNet(object):
 
         params = self.W if params is None else params
 
-        if callable(input):
+        if isinstance(input, hf.nl.Plant):
             input.reset()
 
         activations = [None for _ in range(self.n_layers)]
@@ -307,7 +307,7 @@ class FFNet(object):
 
         for i in range(self.n_layers):
             if i == 0:
-                if callable(input):
+                if isinstance(input, hf.nl.Plant):
                     inputs = input(None)
                 else:
                     inputs = input
@@ -363,7 +363,7 @@ class FFNet(object):
             activations = self.forward(inputs, W)
 
         # get targets
-        if callable(inputs):
+        if isinstance(inputs, hf.nl.Plant):
             # get targets from plant
             targets = inputs.get_targets()
         else:
@@ -383,7 +383,7 @@ class FFNet(object):
 
         batch_size = inputs.shape[0] if batch_size is None else batch_size
 
-        if not callable(inputs):
+        if not isinstance(inputs, hf.nl.Plant):
             # inputs/targets are vectors, select a subset
             indices = self.rng.choice(np.arange(len(inputs)), size=batch_size,
                                       replace=False)

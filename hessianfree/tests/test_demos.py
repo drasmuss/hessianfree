@@ -13,7 +13,6 @@ def test_standard():
     demos.xor()
     demos.crossentropy()
     demos.connections()
-    demos.sparsity()
     demos.integrator(plots=False)
     demos.plant(plots=False)
     demos.profile("integrator", max_epochs=2)

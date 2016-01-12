@@ -5,6 +5,7 @@ Hessian-free optimization for deep networks
     :maxdepth: 3
 
     installation
+    demos
     api
     
 `Github <https://github.com/drasmuss/hessianfree>`_ | 

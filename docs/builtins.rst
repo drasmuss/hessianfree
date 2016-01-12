@@ -1,15 +1,24 @@
 Built-in objects
 ================
 
+.. _optimizers:
+
 Optimizers
 ----------
 .. automodule:: hessianfree.optimizers
+
+
+.. _nonlinearities:
 
 Nonlinearities
 --------------
 
 .. automodule:: hessianfree.nonlinearities
    :no-undoc-members:
+   :special-members:
+   
+   
+.. _loss_functions:
    
 Loss functions
 --------------

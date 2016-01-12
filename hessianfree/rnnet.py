@@ -73,7 +73,7 @@ class RNNet(hf.FFNet):
 
         params = self.W if params is None else params
 
-        if callable(input):
+        if isinstance(input, hf.nl.Plant):
             # reset the plant
             # TODO: allow the initial state of plant to be set?
             input.reset()
@@ -101,7 +101,7 @@ class RNNet(hf.FFNet):
             for i in range(self.n_layers):
                 if i == 0:
                     # get the external input
-                    if callable(input):
+                    if isinstance(input, hf.nl.Plant):
                         if s == 0 and init_activations is not None:
                             ff_input = input(init_activations[-1])
                         else:
