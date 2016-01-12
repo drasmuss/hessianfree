@@ -9,10 +9,3 @@ Hessian-free optimization for deep networks
     
 `Github <https://github.com/drasmuss/hessianfree>`_ | 
 `PyPI <https://pypi.python.org/pypi/hessianfree>`_
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`

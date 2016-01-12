@@ -197,8 +197,8 @@ class FFNet(object):
 
         for i in range(max_epochs):
             self.epoch = i
-            printing = self.debug or (print_period is not None and
-                                      i % print_period == 0)
+            printing = print_period is not None and (i % print_period == 0 or
+                                                     self.debug)
 
             if printing:
                 print "=" * 40
@@ -276,10 +276,12 @@ class FFNet(object):
 
             # check for termination
             if test_errs[-1] < target_err:
-                print "target error reached"
+                if print_period is not None:
+                    print "target error reached"
                 break
             if test is not None and i > 20 and test_errs[-20] < test_errs[-1]:
-                print "overfitting detected, terminating"
+                if print_period is not None:
+                    print "overfitting detected, terminating"
                 break
 
     def forward(self, input, params=None, deriv=False):
