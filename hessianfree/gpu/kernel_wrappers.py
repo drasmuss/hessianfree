@@ -1,14 +1,11 @@
 import copy
 from functools import wraps
-import warnings
 
 import numpy as np
 from pycuda import gpuarray
 from skcuda import cublas, misc
 
 import hessianfree as hf
-
-misc.init()
 
 
 def debug_wrapper(cpu_func, debug=False):

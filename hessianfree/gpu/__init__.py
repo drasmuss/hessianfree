@@ -2,7 +2,6 @@ import os
 import warnings
 
 import numpy as np
-from pycuda import autoinit, driver, compiler
 
 from hessianfree.gpu import kernel_wrappers
 from hessianfree.gpu.kernel_wrappers import iadd, sum_cols, multiply, J_dot
@@ -30,8 +29,13 @@ def init_kernels():
         warnings.warn("Kernels already initialized, skipping init")
         return
 
+    from pycuda import autoinit, driver, compiler
+    from skcuda import misc
+
     dev = autoinit.device
     print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
+
+    misc.init()
 
     DTYPES = ["double", "float"]
 
