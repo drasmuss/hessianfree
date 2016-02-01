@@ -156,6 +156,9 @@ class FFNet(object):
                 print e
                 raise ImportError("PyCuda/scikit-cuda not installed. "
                                   "Set use_GPU=False.")
+
+            hf.gpu.init_kernels()
+
         self.use_GPU = use_GPU
 
     def run_batches(self, inputs, targets, optimizer,

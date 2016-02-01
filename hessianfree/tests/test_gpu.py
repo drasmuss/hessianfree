@@ -4,6 +4,7 @@ import pytest
 
 if hf.gpu_enabled:
     from pycuda import gpuarray
+    hf.gpu.init_kernels()
 
 pytestmark = [pytest.mark.skipif(not hf.gpu_enabled,
                                  reason="GPU packages not installed"),

@@ -2,9 +2,11 @@ import os
 try:
     import pycuda
     import skcuda
-    from hessianfree import gpu
+    import pycuda.autoinit
+
     gpu_enabled = True
-except ImportError:
+    from hessianfree import gpu
+except (ImportError, pycuda.driver.RuntimeError):
     gpu_enabled = False
 
 from hessianfree import nonlinearities, optimizers, dataplotter, loss_funcs
