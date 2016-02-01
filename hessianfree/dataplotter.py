@@ -16,6 +16,8 @@ def run(filename):
     for p in plots:
         plt.figure()
         plt.title(p)
+        if "(log)" in p:
+            plt.yscale("log")
         axes += [plt.gca()]
         lines += [plt.plot(plots[p])[0]]
 

@@ -42,16 +42,19 @@ class FFNet(object):
     :param rng: used to generate any random numbers for this network (use
         this to control the seed)
     :type rng: :class:`~numpy:numpy.random.RandomState`
+    :param dtype: floating point precision used throughout the network
+    :type dtype: :class:`~numpy:numpy.dtype`
     """
 
     def __init__(self, shape, layers=hf.nl.Logistic(), conns=None,
                  loss_type=hf.loss_funcs.SquaredError(), W_init_params={},
-                 use_GPU=False, load_weights=None, debug=False, rng=None):
+                 use_GPU=False, load_weights=None, debug=False, rng=None,
+                 dtype=np.float32):
 
         self.debug = debug
         self.shape = shape
         self.n_layers = len(shape)
-        self.dtype = np.float64 if debug else np.float32
+        self.dtype = np.float64 if debug else dtype
         self.mask = None
         self._optimizer = None
         self.rng = np.random.RandomState() if rng is None else rng
@@ -229,6 +232,7 @@ class FFNet(object):
             if self.mask is not None:
                 update[self.mask] = 0
 
+            # update weights
             self.W += update
 
             # invalidate cached activations (shouldn't be necessary,
@@ -262,7 +266,7 @@ class FFNet(object):
             if plotting:
                 plots["update norm"] += [np.linalg.norm(update)]
                 plots["W norm"] += [np.linalg.norm(self.W)]
-                plots["test error"] += [test_errs[-1]]
+                plots["test error (log)"] += [test_errs[-1]]
 
                 if hasattr(optimizer, "plots"):
                     plots.update(optimizer.plots)
@@ -404,8 +408,7 @@ class FFNet(object):
             inputs.shape[0] = batch_size
             self.activations, self.d_activations = self.forward(inputs, self.W,
                                                                 deriv=True)
-            self.inputs = inputs.get_inputs()
-            self.targets = inputs.get_targets()
+            self.inputs, self.targets = inputs.get_vecs()
 
         # cast to self.dtype
         if self.inputs.dtype != self.dtype:
@@ -840,6 +843,22 @@ class FFNet(object):
             self.loss = hf.loss_funcs.LossSet(loss_type)
         else:
             self.loss = loss_type
+
+    def _run_batch(self, inputs, targets, batch_size=None):
+        """A stripped down version of run_batches that just does the update
+        without any overhead.
+
+        Can be used for optimizers where the cost to compute an update is
+        very cheap, in which case the overhead (e.g., computing test error,
+        saving weights, outputting data for plotting, etc.) becomes
+        non-negligible.
+        """
+
+        # generate minibatch and cache activations
+        self.cache_minibatch(inputs, targets, batch_size)
+
+        # compute update
+        self.W += self.optimizer.compute_update(False)
 
     @property
     def optimizer(self):

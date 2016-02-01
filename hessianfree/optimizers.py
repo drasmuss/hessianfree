@@ -131,9 +131,9 @@ class HessianFree(Optimizer):
             print "improvement", new_err - err
 
         if self.plotting:
-            self.plots["training error"] += [new_err]
+            self.plots["training error (log)"] += [new_err]
             self.plots["learning rate"] += [l_rate]
-            self.plots["damping"] += [self.damping]
+            self.plots["damping (log)"] += [self.damping]
             self.plots["CG iterations"] += [deltas[-1][0]]
             self.plots["backtracked steps"] += [deltas[-1][0] -
                                                 deltas[j + 1][0]]

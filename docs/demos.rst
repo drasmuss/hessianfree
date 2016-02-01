@@ -12,6 +12,7 @@ major features of the package.  These demos can be run via:
 (where ``xor`` can be swapped for the different demo functions described 
 below).
 
+
 Feedforward demos
 -----------------
 
@@ -51,6 +52,60 @@ layer, which is usually what we are interested in).
 The ``use_hf`` parameter can be set to True or False to control whether the
 network is trained via Hessian-free optimization or stochastic gradient 
 descent, for comparison.
+
+
+.. autofunction:: hessianfree.demos.crossentropy
+
+This demo shows two customization options: setting the layer
+nonlinearities, and setting the loss function (the function computing the 
+error that the optimization process will attempt to minimize).  These are
+set by arguments to the :class:`.FFNet` constructor:
+
+.. code-block:: python
+
+  ff = hf.FFNet([2, 5, 2], 
+                layers=[hf.nl.Linear(), hf.nl.Tanh(), hf.nl.Softmax()],
+                loss_type=hf.loss_funcs.CrossEntropy())
+                
+The ``layers=...`` argument sets the nonlinearity function for each layer (the 
+``[2, 5, 2]`` shape argument above indicates that there are three layers with
+2, 5, and 2 nodes, respectively).  See :ref:`nonlinearities` for a description 
+of the built-in functions available, or a custom function can be defined by
+inheriting from :class:`.Nonlinearity`.
+
+The ``loss_type=...`` argument sets the loss function.  Again, these can be 
+selected from the built-in functions (see :ref:`loss_functions`), or custom
+loss functions can be implemented by inheriting from :class:`.LossFunction`.
+It is also possible to pass a list of loss functions to the ``loss_type``
+parameter, in which case a new loss function will be created consisting of
+the summation of all the functions in the list.
+
+In this demo the output layer is being set to :class:`.Softmax` and the
+loss is being set to :class:`.CrossEntropy`.  It then runs through a
+two-dimensional version of the xor test (since softmax only makes sense with
+multi-dimensional output).
+
+
+.. autofunction:: hessianfree.demos.connections
+
+This demo displays another customization option, the ability to set the
+connectivity between layers.  This is done via the ``conns=...`` parameter:
+
+.. code:: python
+
+   ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(),
+                 conns={0: [1, 2], 1: [2, 3], 2: [3]})
+
+The argument is a `dict`, which in this case indicates that layer 0 projects to 
+layers 1 and 2, layer 1 projects to layers 2 and 3, and layer 2 projects to 
+layer 3.  Note that all connections must be "downstream" (layer 2 cannot 
+project back to layer 1), as that would introduce a loop in the dependencies.
+
+This demo illustrates one other feature: passing a single nonlinearity to the
+``layers`` parameter instead of a list.  This will cause all layers to use
+that nonlinearity, except for the input layer which will be set to 
+:class:`~.nonlinearities.Linear`.
+
 
 .. autofunction:: hessianfree.demos.mnist
 
@@ -119,57 +174,6 @@ error.  This could be reduced further by running the training for longer, or by
 fine-tuning the hyperparameters.  The demo function accepts two arguments,
 ``model_args`` and ``run_args``, which can be used to override the default
 parameters.
-
-.. autofunction:: hessianfree.demos.crossentropy
-
-This demo shows two customization options: setting the layer
-nonlinearities, and setting the loss function (the function computing the 
-error that the optimization process will attempt to minimize).  These are
-set by arguments to the :class:`.FFNet` constructor:
-
-.. code-block:: python
-
-  ff = hf.FFNet([2, 5, 2], 
-                layers=[hf.nl.Linear(), hf.nl.Tanh(), hf.nl.Softmax()],
-                loss_type=hf.loss_funcs.CrossEntropy())
-                
-The ``layers=...`` argument sets the nonlinearity function for each layer (the 
-``[2, 5, 2]`` shape argument above indicates that there are three layers with
-2, 5, and 2 nodes, respectively).  See :ref:`nonlinearities` for a description 
-of the built-in functions available, or a custom function can be defined by
-inheriting from :class:`.Nonlinearity`.
-
-The ``loss_type=...`` argument sets the loss function.  Again, these can be 
-selected from the built-in functions (see :ref:`loss_functions`), or custom
-loss functions can be implemented by inheriting from :class:`.LossFunction`.
-It is also possible to pass a list of loss functions to the ``loss_type``
-parameter, in which case a new loss function will be created consisting of
-the summation of all the functions in the list.
-
-In this demo the output layer is being set to :class:`.Softmax` and the
-loss is being set to :class:`.CrossEntropy`.  It then runs through a
-two-dimensional version of the xor test (since softmax only makes sense with
-multi-dimensional output).
-
-.. autofunction:: hessianfree.demos.connections
-
-This demo displays another customization option, the ability to set the
-connectivity between layers.  This is done via the ``conns=...`` parameter:
-
-.. code:: python
-
-   ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(),
-                 conns={0: [1, 2], 1: [2, 3], 2: [3]})
-
-The argument is a `dict`, which in this case indicates that layer 0 projects to 
-layers 1 and 2, layer 1 projects to layers 2 and 3, and layer 2 projects to 
-layer 3.  Note that all connections must be "downstream" (layer 2 cannot 
-project back to layer 1), as that would introduce a loop in the dependencies.
-
-This demo illustrates one other feature: passing a single nonlinearity to the
-``layers`` parameter instead of a list.  This will cause all layers to use
-that nonlinearity, except for the input layer which will be set to 
-:class:`~.nonlinearities.Linear`.
 
 
 Recurrent demos
@@ -290,12 +294,11 @@ some object that will generate the inputs and targets for the network
 online (which we call the plant).
 
 A plant is implemented by inheriting from :class:`.Plant`.  This requires the
-implementation of four functions: :meth:`~.Plant.__call__`, 
-:meth:`~.Plant.get_inputs`, :meth:`~.Plant.get_targets`, and 
-:meth:`~.Plant.reset` (see the descriptions of those functions for details).  
-In this case we are going to use the same nonlinearity
-object defined above as the plant, so it will both act as a layer in the
-network and generate inputs.  This is often a useful way to implement a
+implementation of three functions: :meth:`~.Plant.__call__`, 
+:meth:`~.Plant.get_vecs`, and :meth:`~.Plant.reset` (see the descriptions of 
+those functions for details).  In this case we are going to use the same 
+nonlinearity object defined above as the plant, so it will both act as a layer 
+in the network and generate inputs.  This is often a useful way to implement a
 plant, but not a necessary one -- the plant could be defined as a completely
 separate object.  We use the plant by passing it to the ``inputs`` parameter
 in the :meth:`~.FFNet.run_batches` function.  The plant also defines the 

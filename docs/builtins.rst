@@ -16,6 +16,7 @@ Nonlinearities
 .. automodule:: hessianfree.nonlinearities
    :no-undoc-members:
    :special-members:
+   :exclude-members: __weakref__
    
    
 .. _loss_functions:

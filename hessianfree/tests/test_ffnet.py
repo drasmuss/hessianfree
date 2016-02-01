@@ -144,5 +144,23 @@ def test_asym_dact(use_GPU):
     ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
                    max_epochs=40, print_period=None)
 
+
+def test_stripped_batch(use_GPU):
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
+    targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
+
+    ff = hf.FFNet([2, 5, 1], debug=True, use_GPU=use_GPU)
+    W_copy = ff.W.copy()
+
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                   max_epochs=20, print_period=None)
+
+    ff2 = hf.FFNet([2, 5, 1], debug=True, use_GPU=use_GPU, load_weights=W_copy)
+    ff2.optimizer = hf.opt.HessianFree(CG_iter=2)
+    for _ in range(20):
+        ff2._run_batch(inputs, targets)
+
+    assert np.allclose(ff.forward(inputs)[-1], ff2.forward(inputs)[-1])
+
 if __name__ == "__main__":
     pytest.main("-x -v --tb=native test_ffnet.py")

@@ -168,11 +168,8 @@ def test_plant(use_GPU):
                                          axis=1)
             return self.state
 
-        def get_inputs(self):
-            return self.inputs
-
-        def get_targets(self):
-            return self.targets
+        def get_vecs(self):
+            return self.inputs, self.targets
 
         def reset(self, init=None):
             self.act_count = 0

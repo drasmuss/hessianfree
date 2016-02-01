@@ -39,6 +39,47 @@ def xor(use_hf=True):
         print "output", outputs[i]
 
 
+def crossentropy():
+    """A network that modifies the layer types and loss function."""
+
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
+    targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
+
+    ff = hf.FFNet([2, 5, 2], layers=[hf.nl.Linear(), hf.nl.Tanh(),
+                                     hf.nl.Softmax()],
+                  loss_type=hf.loss_funcs.CrossEntropy())
+
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                   max_epochs=40, plotting=True)
+
+    outputs = ff.forward(inputs)[-1]
+    for i in range(4):
+        print "-" * 20
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", outputs[i]
+
+
+def connections():
+    """A network with non-standard connectivity between layers."""
+
+    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
+    targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
+
+    ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(),
+                  conns={0: [1, 2], 1: [2, 3], 2: [3]})
+
+    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                   max_epochs=40, plotting=True)
+
+    outputs = ff.forward(inputs)[-1]
+    for i in range(4):
+        print "-" * 20
+        print "input", inputs[i]
+        print "target", targets[i]
+        print "output", outputs[i]
+
+
 def mnist(model_args=None, run_args=None):
     """Test on the MNIST (digit classification) dataset.
 
@@ -91,47 +132,6 @@ def mnist(model_args=None, run_args=None):
     output = ff.forward(test[0])
     print ("classification error",
            hf.loss_funcs.ClassificationError().batch_loss(output, test[1]))
-
-
-def crossentropy():
-    """A network that modifies the layer types and loss function."""
-
-    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
-    targets = np.asarray([[1, 0], [0, 1], [0, 1], [1, 0]], dtype=np.float32)
-
-    ff = hf.FFNet([2, 5, 2], layers=[hf.nl.Linear(), hf.nl.Tanh(),
-                                     hf.nl.Softmax()],
-                  loss_type=hf.loss_funcs.CrossEntropy())
-
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, plotting=True)
-
-    outputs = ff.forward(inputs)[-1]
-    for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", outputs[i]
-
-
-def connections():
-    """A network with non-standard connectivity between layers."""
-
-    inputs = np.asarray([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.float32)
-    targets = np.asarray([[0], [1], [1], [0]], dtype=np.float32)
-
-    ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(),
-                  conns={0: [1, 2], 1: [2, 3], 2: [3]})
-
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, plotting=True)
-
-    outputs = ff.forward(inputs)[-1]
-    for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", outputs[i]
 
 
 def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
@@ -315,11 +315,8 @@ def plant(plots=True):
                                          axis=1)
             return self.state
 
-        def get_inputs(self):
-            return self.inputs
-
-        def get_targets(self):
-            return self.targets
+        def get_vecs(self):
+            return self.inputs, self.targets
 
         def reset(self, init=None):
             self.act_count = 0
