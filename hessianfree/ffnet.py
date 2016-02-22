@@ -66,6 +66,8 @@ class FFNet(object):
 
         self.inputs = None
         self.targets = None
+        self.activations = None
+        self.d_activations = None
 
         # initialize layer nonlinearities
         if not isinstance(layers, (list, tuple)):
@@ -224,7 +226,6 @@ class FFNet(object):
                                  (self.targets.shape[-1], self.shape[-1]))
 
             assert self.activations[-1].dtype == self.dtype
-            assert np.all([np.all(np.isfinite(a)) for a in self.activations])
 
             # compute update
             update = optimizer.compute_update(printing)
@@ -393,9 +394,13 @@ class FFNet(object):
         batch_size = inputs.shape[0] if batch_size is None else batch_size
 
         if not isinstance(inputs, hf.nl.Plant):
-            # inputs/targets are vectors, select a subset
-            indices = self.rng.choice(np.arange(len(inputs)), size=batch_size,
-                                      replace=False)
+            # inputs/targets are vectors
+
+            indices = np.arange(len(inputs))
+            if batch_size < len(inputs):
+                # select a subset
+                indices = self.rng.choice(indices, size=batch_size,
+                                          replace=False)
             self.inputs = inputs[indices]
             self.targets = targets[indices]
 
@@ -404,6 +409,7 @@ class FFNet(object):
                                                                 self.W,
                                                                 deriv=True)
         else:
+            # input is a dynamic plant
             if targets is not None:
                 raise ValueError("Cannot specify targets when using dynamic "
                                  "plant to generate inputs (plant should "
