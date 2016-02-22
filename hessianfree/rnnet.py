@@ -156,8 +156,11 @@ class RNNet(hf.FFNet):
                             dtype=self.dtype)
                     d_activations[i][:, s] = d_act
 
-        if not np.all([np.all(np.isfinite(a)) for a in activations]):
-            raise OverflowError("Non-finite nonlinearity activation value")
+        for i, a in enumerate(activations):
+            if not np.all(np.isfinite(a)):
+                raise OverflowError("Non-finite nonlinearity activation "
+                                    "value (layer %d) \n %s" %
+                                    (i, a[not np.isfinite(a)]))
 
         if deriv:
             return activations, d_activations
@@ -488,6 +491,19 @@ class RNNet(hf.FFNet):
                 return [a for a in array]
 
             return [split_axes(a, n - 1) for a in array]
+
+        # clear out old data (this would happen eventually on its own, but by
+        # doing it first we make sure there is room on the GPU before
+        # creating new arrays)
+        if hasattr(self, "GPU_W"):
+            del self.GPU_W
+            del self.GPU_activations
+            del self.GPU_d_activations
+            del self.GPU_d2_loss
+            del self.GPU_tmp_space
+            del self.GPU_states
+            del self.GPU_errors
+            del self.GPU_deltas
 
         self.GPU_W = gpuarray.to_gpu(self.W)
 

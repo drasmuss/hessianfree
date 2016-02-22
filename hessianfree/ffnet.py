@@ -336,9 +336,11 @@ class FFNet(object):
                 d_activations[i] = self.layers[i].d_activation(inputs,
                                                                activations[i])
 
-        if not np.all([np.all(np.isfinite(a)) for a in activations]):
-            raise OverflowError("Non-finite nonlinearity activation value")
-
+        for i, a in enumerate(activations):
+            if not np.all(np.isfinite(a)):
+                raise OverflowError("Non-finite nonlinearity activation "
+                                    "value (layer %d) \n %s" %
+                                    (i, a[not np.isfinite(a)]))
         if deriv:
             return activations, d_activations
 
@@ -441,11 +443,21 @@ class FFNet(object):
 
         from pycuda import gpuarray
 
+        # clear out old data (this would happen eventually on its own, but by
+        # doing it first we make sure there is room on the GPU before
+        # creating new arrays)
+        if hasattr(self, "GPU_W"):
+            del self.GPU_W
+            del self.GPU_activations
+            del self.GPU_d_activations
+            del self.GPU_d2_loss
+            del self.GPU_tmp_space
+
+        self.GPU_W = gpuarray.to_gpu(self.W)
         self.GPU_activations = [gpuarray.to_gpu(a)
                                 for a in self.activations]
         self.GPU_d_activations = [gpuarray.to_gpu(a)
                                   for a in self.d_activations]
-        self.GPU_W = gpuarray.to_gpu(self.W)
         self.GPU_d2_loss = [gpuarray.to_gpu(a) if a is not None else None
                             for a in self.d2_loss]
         self.GPU_tmp_space = [gpuarray.empty(a.shape, self.dtype)

@@ -188,7 +188,7 @@ class HessianFree(Optimizer):
 
             if not np.isfinite(step):
                 warnings.warn("Non-finite step value (%f)" % step)
-            step = np.nan_to_num(step)
+                break
 
             if printing:
                 print "G_dir norm", np.linalg.norm(get(G_dir))
