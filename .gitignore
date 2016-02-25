@@ -3,6 +3,8 @@
 *.png
 *.pyc
 *_weights.npy
+.cache
+.idea
 .project
 .pydevproject
 .settings

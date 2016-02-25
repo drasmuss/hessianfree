@@ -87,9 +87,6 @@ def test_testerr(use_GPU):
     outputs = ff.forward(inputs, ff.W)
 
     assert ff.loss.batch_loss(outputs, targets) < 1e-4
-
-    print outputs[-1]
-
     assert err.batch_loss(outputs, targets) == 0.0
 
 

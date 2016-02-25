@@ -1,6 +1,4 @@
 language: python
-python:
-  - "2.7"
 notifications:
   email:
     on_success: change
@@ -12,6 +10,10 @@ env:
       PYTHON_VERSION="2.7"
     - CONDA_DEPS="numpy"
       PYTHON_VERSION="2.7"
+    - CONDA_DEPS="numpy==1.9.2"
+      PYTHON_VERSION="3.5"
+    - CONDA_DEPS="numpy"
+      PYTHON_VERSION="3.5"
   
 # Setup Miniconda
 before_install:

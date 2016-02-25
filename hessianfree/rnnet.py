@@ -1,13 +1,15 @@
 """Implementation of recurrent network, including Gauss-Newton approximation
 for use in Hessian-free optimization.
 
-.. codeauthor:: Daniel Rasmussen <drasmussen@princeton.edu>
+.. codeauthor:: Daniel Rasmussen <daniel.rasmussen@appliedbrainresearch.com>
 
 Based on
 Martens, J., & Sutskever, I. (2011). Learning recurrent neural networks with
 hessian-free optimization. Proceedings of the 28th International Conference on
 Machine Learning.
 """
+
+from __future__ import print_function
 
 import numpy as np
 
@@ -28,7 +30,7 @@ class RNNet(hf.FFNet):
 
     See :class:`.FFNet` for the remaining parameters."""
 
-    def __init__(self, shape, rec_layers=None, W_rec_params={},
+    def __init__(self, shape, rec_layers=None, W_rec_params=None,
                  truncation=None, **kwargs):
 
         # define recurrence for each layer (needs to be done before super
@@ -45,18 +47,20 @@ class RNNet(hf.FFNet):
 
         # add on recurrent weights
         if kwargs.get("load_weights", None) is None and len(rec_layers) > 0:
+            if W_rec_params is None:
+                W_rec_params = dict()
             self.W = np.concatenate(
                 (self.W, self.init_weights([(self.shape[l], self.shape[l])
                                             for l in range(self.n_layers)
                                             if l in rec_layers],
                                            **W_rec_params)))
 
-    def forward(self, input, params=None, deriv=False, init_activations=None,
+    def forward(self, inputs, params=None, deriv=False, init_activations=None,
                 init_state=None):
         """Compute layer activations for given input and parameters.
 
-        :param input: input vectors (passed to first layer)
-        :type input: :class:`~numpy:numpy.ndarray`
+        :param inputs: input vectors (passed to first layer)
+        :type inputs: :class:`~numpy:numpy.ndarray`
         :param params: parameter vector (weights) for the network (defaults to
             ``self.W``)
         :type params: :class:`~numpy:numpy.ndarray`
@@ -73,13 +77,13 @@ class RNNet(hf.FFNet):
 
         params = self.W if params is None else params
 
-        if isinstance(input, hf.nl.Plant):
+        if isinstance(inputs, hf.nl.Plant):
             # reset the plant
             # TODO: allow the initial state of plant to be set?
-            input.reset()
+            inputs.reset()
 
-        batch_size = input.shape[0]
-        sig_len = input.shape[1]
+        batch_size = inputs.shape[0]
+        sig_len = inputs.shape[1]
 
         activations = [np.zeros((batch_size, sig_len, l), dtype=self.dtype)
                        for l in self.shape]
@@ -89,7 +93,7 @@ class RNNet(hf.FFNet):
                      for l in self.shape]
 
         if deriv:
-            d_activations = [None for l in self.layers]
+            d_activations = [None for _ in self.layers]
 
         for i, l in enumerate(self.layers):
             # reset any state in the nonlinearities
@@ -101,17 +105,17 @@ class RNNet(hf.FFNet):
             for i in range(self.n_layers):
                 if i == 0:
                     # get the external input
-                    if isinstance(input, hf.nl.Plant):
+                    if isinstance(inputs, hf.nl.Plant):
                         if s == 0 and init_activations is not None:
-                            ff_input = input(init_activations[-1])
+                            ff_input = inputs(init_activations[-1])
                         else:
                             # call the plant with the output of the previous
                             # timestep to generate the next input
                             # note: this will pass zeros on the first timestep
                             # if init_activations is not set
-                            ff_input = input(activations[-1][:, s - 1])
+                            ff_input = inputs(activations[-1][:, s - 1])
                     else:
-                        ff_input = input[:, s]
+                        ff_input = inputs[:, s]
                 else:
                     # compute feedforward input
                     ff_input = np.zeros_like(activations[i][:, s])
@@ -312,15 +316,15 @@ class RNNet(hf.FFNet):
         try:
             assert np.allclose(calc_grad, grad, rtol=1e-3)
         except AssertionError:
-            print "calc_grad"
-            print calc_grad
-            print "finite grad"
-            print grad
-            print "calc_grad - finite grad"
-            print calc_grad - grad
-            print "calc_grad / finite grad"
-            print calc_grad / grad
-            raw_input("Paused (press enter to continue)")
+            print("calc_grad")
+            print(calc_grad)
+            print("finite grad")
+            print(grad)
+            print("calc_grad - finite grad")
+            print(calc_grad - grad)
+            print("calc_grad / finite grad")
+            print(calc_grad / grad)
+            input("Paused (press enter to continue)")
 
     def calc_G(self, v, damping=0, out=None):
         """Compute Gauss-Newton matrix-vector product."""
@@ -358,7 +362,7 @@ class RNNet(hf.FFNet):
         W_ff = dict([(conn, self.get_weights(self.W, conn))
                      for conn in self.offsets])
         Gv_ff = dict([(conn, self.get_weights(Gv, conn))
-                     for conn in self.offsets])
+                      for conn in self.offsets])
 
         for s in range(sig_len):
             for l in range(self.n_layers):
@@ -584,7 +588,7 @@ class RNNet(hf.FFNet):
         W_ff = dict([(conn, self.get_weights(self.GPU_W, conn))
                      for conn in self.offsets])
         Gv_ff = dict([(conn, self.get_weights(Gv, conn))
-                     for conn in self.offsets])
+                      for conn in self.offsets])
 
         for s in range(sig_len):
             for l in range(self.n_layers):
@@ -792,15 +796,15 @@ class RNNet(hf.FFNet):
         try:
             assert np.allclose(calc_G, Gv, rtol=1e-3)
         except AssertionError:
-            print "calc_G"
-            print calc_G
-            print "finite G"
-            print Gv
-            print "calc_G - finite G"
-            print calc_G - Gv
-            print "calc_G / finite G"
-            print calc_G / Gv
-            raw_input("Paused (press enter to continue)")
+            print("calc_G")
+            print(calc_G)
+            print("finite G")
+            print(Gv)
+            print("calc_G - finite G")
+            print(calc_G - Gv)
+            print("calc_G / finite G")
+            print(calc_G / Gv)
+            input("Paused (press enter to continue)")
 
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""

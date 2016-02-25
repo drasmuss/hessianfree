@@ -8,6 +8,12 @@ environment:
     - CONDA_DEPS: numpy
       PYTHON_VERSION: 2.7
       MINICONDA: C:\Miniconda-x64
+    - CONDA_DEPS: numpy==1.9.2
+      PYTHON_VERSION: 3.5
+      MINICONDA: C:\Miniconda-x64
+    - CONDA_DEPS: numpy
+      PYTHON_VERSION: 3.5
+      MINICONDA: C:\Miniconda-x64
 
 init:
   - "ECHO %PYTHON_VERSION% %MINICONDA%"

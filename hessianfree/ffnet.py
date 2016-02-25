@@ -1,13 +1,14 @@
 """Implementation of feedforward network, including Gauss-Newton approximation
 for use in Hessian-free optimization.
 
-.. codeauthor:: Daniel Rasmussen <drasmussen@princeton.edu>
+.. codeauthor:: Daniel Rasmussen <daniel.rasmussen@appliedbrainresearch.com>
 
 Based on
 Martens, J. (2010). Deep learning via Hessian-free optimization. In Proceedings
 of the 27th International Conference on Machine Learning.
 """
 
+from __future__ import print_function
 
 from collections import defaultdict, OrderedDict
 import pickle
@@ -47,7 +48,7 @@ class FFNet(object):
     """
 
     def __init__(self, shape, layers=hf.nl.Logistic(), conns=None,
-                 loss_type=hf.loss_funcs.SquaredError(), W_init_params={},
+                 loss_type=hf.loss_funcs.SquaredError(), W_init_params=None,
                  use_GPU=False, load_weights=None, debug=False, rng=None,
                  dtype=np.float32):
 
@@ -130,6 +131,8 @@ class FFNet(object):
 
         # initialize connection weights
         if load_weights is None:
+            if W_init_params is None:
+                W_init_params = {}
             self.W = self.init_weights(
                 [(self.shape[pre], self.shape[post])
                  for pre in self.conns for post in self.conns[pre]],
@@ -141,9 +144,11 @@ class FFNet(object):
                 # load weights from file
                 self.W = np.load(load_weights)
 
-            if len(self.W) != np.max(self.offsets.values()):
-                raise IndexError("Length of loaded weights does not "
-                                 "match expected length")
+            if len(self.W) != np.max(list(self.offsets.values())):
+                raise IndexError(
+                    "Length of loaded weights (%s) does not match expected "
+                    "length (%s)" % (len(self.W),
+                                     np.max(list(self.offsets.values()))))
 
             if self.W.dtype != self.dtype:
                 raise TypeError("Loaded weights dtype (%s) doesn't match "
@@ -154,8 +159,8 @@ class FFNet(object):
             try:
                 import pycuda
                 import skcuda
-            except Exception, e:
-                print e
+            except Exception as e:
+                print(e)
                 raise ImportError("PyCuda/scikit-cuda not installed. "
                                   "Set use_GPU=False.")
 
@@ -209,8 +214,8 @@ class FFNet(object):
                                                      self.debug)
 
             if printing:
-                print "=" * 40
-                print "batch", i
+                print("=" * 40)
+                print("batch", i)
 
             # generate minibatch and cache activations
             self.cache_minibatch(inputs, targets, batch_size)
@@ -259,7 +264,7 @@ class FFNet(object):
             test_errs += [err]
 
             if printing:
-                print "test error", test_errs[-1]
+                print("test error", test_errs[-1])
 
             # save the weights with the best error
             if self.best_W is None or test_errs[-1] < self.best_error:
@@ -285,18 +290,18 @@ class FFNet(object):
             # check for termination
             if test_errs[-1] < target_err:
                 if print_period is not None:
-                    print "target error reached"
+                    print("target error reached")
                 break
             if test is not None and i > 20 and test_errs[-20] < test_errs[-1]:
                 if print_period is not None:
-                    print "overfitting detected, terminating"
+                    print("overfitting detected, terminating")
                 break
 
-    def forward(self, input, params=None, deriv=False):
+    def forward(self, inputs, params=None, deriv=False):
         """Compute layer activations for given input and parameters.
 
-        :param input: input vectors (passed to first layer)
-        :type input: :class:`~numpy:numpy.ndarray`
+        :param inputs: input vectors (passed to first layer)
+        :type inputs: :class:`~numpy:numpy.ndarray`
         :param params: parameter vector (weights) for the network (defaults to
             ``self.W``)
         :type params: :class:`~numpy:numpy.ndarray`
@@ -306,8 +311,8 @@ class FFNet(object):
 
         params = self.W if params is None else params
 
-        if isinstance(input, hf.nl.Plant):
-            input.reset()
+        if isinstance(inputs, hf.nl.Plant):
+            inputs.reset()
 
         activations = [None for _ in range(self.n_layers)]
         if deriv:
@@ -315,12 +320,12 @@ class FFNet(object):
 
         for i in range(self.n_layers):
             if i == 0:
-                if isinstance(input, hf.nl.Plant):
-                    inputs = input(None)
+                if isinstance(inputs, hf.nl.Plant):
+                    inputs = inputs(None)
                 else:
-                    inputs = input
+                    inputs = inputs
             else:
-                inputs = np.zeros((input.shape[0], self.shape[i]),
+                inputs = np.zeros((inputs.shape[0], self.shape[i]),
                                   dtype=self.dtype)
                 for pre in self.back_conns[i]:
                     W, b = self.get_weights(params, (pre, i))
@@ -375,7 +380,7 @@ class FFNet(object):
         # get targets
         if isinstance(inputs, hf.nl.Plant):
             # get targets from plant
-            targets = inputs.get_targets()
+            targets = inputs.get_vecs()[1]
         else:
             targets = self.targets if targets is None else targets
 
@@ -469,7 +474,8 @@ class FFNet(object):
         self.GPU_tmp_space = [gpuarray.empty(a.shape, self.dtype)
                               for a in self.activations]
 
-    def J_dot(self, J, vec, transpose_J=False, out=None):
+    @staticmethod
+    def J_dot(J, vec, transpose_J=False, out=None):
         """Compute the product of a Jacobian and some vector."""
 
         # In many cases the Jacobian is a diagonal matrix, so it is more
@@ -556,15 +562,15 @@ class FFNet(object):
         try:
             assert np.allclose(calc_grad, grad, rtol=1e-3)
         except AssertionError:
-            print "calc_grad"
-            print calc_grad
-            print "finite grad"
-            print grad
-            print "calc_grad - finite grad"
-            print calc_grad - grad
-            print "calc_grad / finite grad"
-            print calc_grad / grad
-            raw_input("Paused (press enter to continue)")
+            print("calc_grad")
+            print(calc_grad)
+            print("finite grad")
+            print(grad)
+            print("calc_grad - finite grad")
+            print(calc_grad - grad)
+            print("calc_grad / finite grad")
+            print(calc_grad / grad)
+            input("Paused (press enter to continue)")
 
     def calc_G(self, v, damping=0, out=None):
         """Compute Gauss-Newton matrix-vector product."""
@@ -735,16 +741,15 @@ class FFNet(object):
         try:
             assert np.allclose(calc_G, Gv, rtol=1e-3)
         except AssertionError:
-            print "calc_G"
-            print calc_G
-            print "finite G"
-            print Gv
-            print "calc_G - finite G"
-            print calc_G - Gv
-            print "calc_G / finite G"
-            print calc_G / Gv
-            raise
-            raw_input("Paused (press enter to continue)")
+            print("calc_G")
+            print(calc_G)
+            print("finite G")
+            print(Gv)
+            print("calc_G - finite G")
+            print(calc_G - Gv)
+            print("calc_G / finite G")
+            print(calc_G / Gv)
+            input("Paused (press enter to continue)")
 
     def init_weights(self, shapes, coeff=1.0, biases=0.0, init_type="sparse"):
         """Weight initialization, given shapes of weight matrices.
@@ -805,9 +810,6 @@ class FFNet(object):
     def compute_offsets(self):
         """Precompute offsets for layers in the overall parameter vector."""
 
-        n_params = [(self.shape[pre] + 1) * self.shape[post]
-                    for pre in self.conns
-                    for post in self.conns[pre]]
         self.offsets = {}
         offset = 0
         for pre in self.conns:
@@ -830,7 +832,7 @@ class FFNet(object):
         offset, W_end, b_end = self.offsets[conn]
         W = params[offset:W_end]
         b = params[W_end:b_end]
-        return (W.reshape((self.shape[conn[0]], self.shape[conn[1]])), b)
+        return W.reshape((self.shape[conn[0]], self.shape[conn[1]])), b
 
     def init_loss(self, loss_type):
         """Set the loss type for this network to the given

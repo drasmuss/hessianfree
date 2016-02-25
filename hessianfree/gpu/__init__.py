@@ -1,7 +1,7 @@
+from __future__ import print_function
+
 import os
 import warnings
-
-import numpy as np
 
 from hessianfree.gpu import kernel_wrappers
 from hessianfree.gpu.kernel_wrappers import iadd, sum_cols, multiply, J_dot
@@ -33,7 +33,7 @@ def init_kernels():
     from skcuda import misc
 
     dev = autoinit.device
-    print "GPU found, using %s %s" % (dev.name(), dev.compute_capability())
+    print("GPU found, using %s %s" % (dev.name(), dev.compute_capability()))
 
     misc.init()
 

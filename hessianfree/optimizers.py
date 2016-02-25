@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import warnings
 from collections import defaultdict
 
@@ -57,8 +59,8 @@ class HessianFree(Optimizer):
         grad = self.net.calc_grad()
 
         if printing:
-            print "initial err", err
-            print "grad norm", np.linalg.norm(grad)
+            print("initial err", err)
+            print("grad norm", np.linalg.norm(grad))
 
         # run CG
         if self.init_delta is None:
@@ -68,7 +70,7 @@ class HessianFree(Optimizer):
                                          printing=printing and self.net.debug)
 
         if printing:
-            print "CG steps", deltas[-1][0]
+            print("CG steps", deltas[-1][0])
 
         self.init_delta = deltas[-1][1]  # note: don't backtrack this
 
@@ -89,8 +91,8 @@ class HessianFree(Optimizer):
             j -= 1
 
         if printing:
-            print "using iteration", deltas[j + 1][0]
-            print "backtracked err", new_err
+            print("using iteration", deltas[j + 1][0])
+            print("backtracked err", new_err)
 
         # update damping parameter (compare improvement predicted by
         # quadratic model to the actual improvement in the error)
@@ -105,8 +107,8 @@ class HessianFree(Optimizer):
             self.damping *= 0.66
 
         if printing:
-            print "improvement_ratio", improvement_ratio
-            print "damping", self.damping
+            print("improvement_ratio", improvement_ratio)
+            print("damping", self.damping)
 
         # line search to find learning rate
         l_rate = 1.0
@@ -125,10 +127,10 @@ class HessianFree(Optimizer):
             new_err = err
 
         if printing:
-            print "min_improv", min_improv
-            print "l_rate", l_rate
-            print "l_rate err", new_err
-            print "improvement", new_err - err
+            print("min_improv", min_improv)
+            print("l_rate", l_rate)
+            print("l_rate err", new_err)
+            print("improvement", new_err - err)
 
         if self.plotting:
             self.plots["training error (log)"] += [new_err]
@@ -158,16 +160,20 @@ class HessianFree(Optimizer):
             base_grad = gpuarray.to_gpu(grad)
             delta = gpuarray.to_gpu(init_delta)
             G_dir = gpuarray.zeros(grad.shape, dtype=self.net.dtype)
-            dot = lambda a, b: gpuarray.dot(a, b).get()
-            get = lambda x: x.get(pagelocked=True)
             self.calc_G = self.net.GPU_calc_G
+
+            def dot(a, b):
+                return gpuarray.dot(a, b).get()
+
+            def get(x):
+                return x.get(pagelocked=True)
         else:
             base_grad = grad
             delta = init_delta
             G_dir = np.zeros_like(grad)
-            dot = np.dot
-            get = lambda x: x.copy()
             self.calc_G = self.net.calc_G
+            dot = np.dot
+            get = np.copy
 
         residual = base_grad.copy()
         residual -= self.calc_G(delta, damping=self.damping, out=G_dir)
@@ -176,10 +182,10 @@ class HessianFree(Optimizer):
 
         for i in range(iters):
             if printing:
-                print "-" * 20
-                print "CG iteration", i
-                print "delta norm", np.linalg.norm(get(delta))
-                print "direction norm", np.linalg.norm(get(direction))
+                print("-" * 20)
+                print("CG iteration", i)
+                print("delta norm", np.linalg.norm(get(delta)))
+                print("direction norm", np.linalg.norm(get(direction)))
 
             self.calc_G(direction, damping=self.damping, out=G_dir)
 
@@ -191,8 +197,8 @@ class HessianFree(Optimizer):
                 break
 
             if printing:
-                print "G_dir norm", np.linalg.norm(get(G_dir))
-                print "step", step
+                print("G_dir norm", np.linalg.norm(get(G_dir)))
+                print("step", step)
 
             if self.net.debug:
                 tmp_G_dir = get(G_dir)
@@ -236,7 +242,7 @@ class HessianFree(Optimizer):
             gap = max(int(0.1 * i), 10)
 
             if printing:
-                print "termination val", vals[i]
+                print("termination val", vals[i])
 
             if (i > gap and vals[i - gap] < 0 and
                     (vals[i] - vals[i - gap]) / vals[i] < 5e-6 * gap):
@@ -274,7 +280,7 @@ class SGD(Optimizer):
 
         if printing:
             train_err = self.net.error()
-            print "training error", train_err
+            print("training error", train_err)
 
             # note: for SGD we'll just do the plotting when we print (since
             # we're going to be doing a lot more, and smaller, updates)

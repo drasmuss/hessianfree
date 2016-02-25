@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import ast
 from cProfile import Profile
 import pickle
@@ -33,10 +35,10 @@ def xor(use_hf=True):
 
     outputs = ff.forward(inputs)[-1]
     for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", outputs[i]
+        print("-" * 2)
+        print("input", inputs[i])
+        print("target", targets[i])
+        print("output", outputs[i])
 
 
 def crossentropy():
@@ -54,10 +56,10 @@ def crossentropy():
 
     outputs = ff.forward(inputs)[-1]
     for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", outputs[i]
+        print("-" * 20)
+        print("input", inputs[i])
+        print("target", targets[i])
+        print("output", outputs[i])
 
 
 def connections():
@@ -74,10 +76,10 @@ def connections():
 
     outputs = ff.forward(inputs)[-1]
     for i in range(4):
-        print "-" * 20
-        print "input", inputs[i]
-        print "target", targets[i]
-        print "output", outputs[i]
+        print("-" * 20)
+        print("input", inputs[i])
+        print("target", targets[i])
+        print("output", outputs[i])
 
 
 def mnist(model_args=None, run_args=None):
@@ -130,8 +132,8 @@ def mnist(model_args=None, run_args=None):
                        **run_args)
 
     output = ff.forward(test[0])
-    print ("classification error",
-           hf.loss_funcs.ClassificationError().batch_loss(output, test[1]))
+    print("classification error",
+          hf.loss_funcs.ClassificationError().batch_loss(output, test[1]))
 
 
 def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
@@ -430,4 +432,4 @@ if __name__ == "__main__":
         if sys.argv[1] in locals():
             locals()[sys.argv[1]](*[ast.literal_eval(a) for a in sys.argv[2:]])
         else:
-            print "Unknown demo function (%s)" % sys.argv[1]
+            print("Unknown demo function (%s)" % sys.argv[1])

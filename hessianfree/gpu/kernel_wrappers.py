@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import copy
 from functools import wraps
 
@@ -35,13 +37,13 @@ def debug_wrapper(cpu_func, debug=False):
                     tmp = out_gpu.get()
                     assert np.allclose(tmp.ravel(), out_cpu.ravel(), rtol=1e-3)
                 except AssertionError:
-                    print np.max(np.abs(out_cpu - tmp))
-                    print "gpu"
-                    print tmp
-                    print "cpu"
-                    print out_cpu
-                    print "gpu/cpu"
-                    print tmp / out_cpu
+                    print(np.max(np.abs(out_cpu - tmp)))
+                    print("gpu")
+                    print(tmp)
+                    print("cpu")
+                    print(out_cpu)
+                    print("gpu/cpu")
+                    print(tmp / out_cpu)
                     raise
             return out_gpu
         return debug_func
@@ -162,25 +164,6 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
         grid, block, stream, J.gpudata, v.gpudata, out.gpudata,
         np.int32(a0), np.int32(a1), np.int32(increment),
         shared_size=1088 * dtype.itemsize)
-
-    # concurrent gemv approach (this seems to be slower, but maybe for
-    # really large matrices?)
-    # note: all the transposes are swapped because cublas assumes column-major
-    # ordering
-#     lda = a0 if transpose_J else a1
-#     beta = dtype.type(1.0) if increment else dtype.type(0.0)
-#     transJ = "n" if transpose_J else "t"
-#     if dtype == np.float32:
-#         gemv = cublas.cublasSgemv
-#     else:
-#         gemv = cublas.cublasDgemv
-#     for i in range(J.shape[0]):
-#         cublas.cublasSetStream(misc._global_cublas_handle,
-#                                hf.gpu.streams[i % len(hf.gpu.streams)].handle)
-#         gemv(misc._global_cublas_handle, transJ, a1, a0, np.float32(1.0),
-#              J[i].gpudata, lda, v[i].gpudata, 1, beta, out[i].gpudata, 1)
-#
-#     cublas.cublasSetStream(misc._global_cublas_handle, 0)
 
     return out
 

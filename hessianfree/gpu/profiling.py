@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import ast
 import pstats
 import sys
@@ -56,13 +58,13 @@ def threshold_calc_G():
             v = v.get()
             times[i, j, 1] = time.time() - start
 
-            print "b", b, "n", n, "times", times[i, j]
+            print("b", b, "n", n, "times", times[i, j])
 
-    print times[..., 1] - times[..., 0]
+    print(times[..., 1] - times[..., 0])
 
-    print "batch size (%s) vs layer size (%s)" % (batch_size, layer_size)
-    print " (True indicates GPU is faster)"
-    print times[..., 1] < times[..., 0]
+    print("batch size (%s) vs layer size (%s)" % (batch_size, layer_size))
+    print(" (True indicates GPU is faster)")
+    print(times[..., 1] < times[..., 0])
 
 
 def threshold_rnn_calc_G():
@@ -110,13 +112,13 @@ def threshold_rnn_calc_G():
             v = v.get()
             times[i, j, 1] = time.time() - start
 
-            print "b", b, "n", n, "times", times[i, j]
+            print("b", b, "n", n, "times", times[i, j])
 
-    print times[..., 1] - times[..., 0]
+    print(times[..., 1] - times[..., 0])
 
-    print "signal length (%s) versus layer size (%s)" % (sig_len, layer_size)
-    print " (True indicates GPU is faster)"
-    print times[..., 1] < times[..., 0]
+    print("signal length (%s) versus layer size (%s)" % (sig_len, layer_size))
+    print(" (True indicates GPU is faster)")
+    print(times[..., 1] < times[..., 0])
 
 
 def profile_calc_G(cprofile=True):
@@ -153,7 +155,7 @@ def profile_calc_G(cprofile=True):
     if cprofile:
         p.disable()
 
-        print "time", time.time() - start
+        print("time", time.time() - start)
 
         ps = pstats.Stats(p)
         ps.strip_dirs().sort_stats('time').print_stats(20)
@@ -196,7 +198,7 @@ def profile_rnn_calc_G(cprofile=True):
     if cprofile:
         p.disable()
 
-        print "time", time.time() - start
+        print("time", time.time() - start)
 
         ps = pstats.Stats(p)
         ps.strip_dirs().sort_stats('time').print_stats(20)
@@ -238,7 +240,7 @@ def profile_dot(cprofile=True):
     if cprofile:
         p.disable()
 
-        print "time", time.time() - start
+        print("time", time.time() - start)
 
         ps = pstats.Stats(p)
         ps.strip_dirs().sort_stats('time').print_stats(20)
@@ -250,4 +252,4 @@ if __name__ == "__main__":
     if sys.argv[1] in locals():
         locals()[sys.argv[1]](*[ast.literal_eval(a) for a in sys.argv[2:]])
     else:
-        print "Unknown profile function (%s)" % sys.argv[1]
+        print("Unknown profile function (%s)" % sys.argv[1])

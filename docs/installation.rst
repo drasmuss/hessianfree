@@ -35,7 +35,7 @@ Use this if you want to track the latest changes from the repository:
 Requirements
 ------------
 
-* python 2.7
+* python 2.7 or 3.5
 * numpy 1.9.2
 * matplotlib 1.3.1
 * optional: scipy 0.15, pycuda 2015, scikit-cuda 0.5, pytest 2.5
