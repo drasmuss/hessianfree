@@ -43,7 +43,7 @@ Requirements
 Installing PyCUDA on Windows
 ----------------------------
 
-Steps to install PyCuda on Win7 64bit (as of Nov. 2015)
+Steps to install PyCuda on Win7/10 64bit (as of Feb. 2016)
 
 Assumes default installation locations, adjust as appropriate.
 
@@ -65,7 +65,7 @@ Assumes default installation locations, adjust as appropriate.
 
    ::
    
-      C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\amd64;C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin;C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\IDE;
+      C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\amd64;C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin;
 
 6. Install CUDA (http://docs.nvidia.com/cuda/cuda-getting-started-guide-for-microsoft-windows/#axzz3RTeEcNTV)
 
@@ -78,7 +78,7 @@ Assumes default installation locations, adjust as appropriate.
    
    ::
    
-      INCLUDES        +=  "-I$(TOP)/include" "-I$(TOP)/include/cudart" "-IC:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include" $(_SPACE_)``
+      INCLUDES        +=  "-I$(TOP)/include" "-I$(TOP)/include/cudart" "-IC:/Program Files (x86)/Microsoft Visual Studio 12.0/VC/include" $(_SPACE_)
 
 8. Install PyCUDA
 

@@ -158,7 +158,7 @@ def J_dot(J, v, out=None, transpose_J=False, increment=False, stream=None):
 
     # mv kernel approach
     block = (32, 32, 1)
-    grid = (a0 / 32 + (a0 % 32 != 0), J.shape[0])
+    grid = (a0 // 32 + (a0 % 32 != 0), J.shape[0])
     hf.gpu.mv_batched_kernel[dtype ==
                              np.float32][transpose_J].prepared_async_call(
         grid, block, stream, J.gpudata, v.gpudata, out.gpudata,
@@ -179,9 +179,9 @@ def sum_cols(a, out=None, increment=False, stream=None):
 
     assert a.dtype == out.dtype
 
-    block_x = min(a._block[0] / 32, a.shape[1])
+    block_x = min(a._block[0] // 32, a.shape[1])
     block_y = 32
-    grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0), 1)
+    grid = (a.shape[1] // block_x + (a.shape[1] % block_x != 0), 1)
 
     hf.gpu.sum_cols_kernel[dtype == np.float32].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
@@ -200,9 +200,9 @@ def iadd(a, b, stream=None):
     assert a.dtype == b.dtype
 
     block_x = min(32, a.shape[0])
-    block_y = min(a._block[0] / block_x, a.shape[1])
-    grid = (a.shape[1] / block_x + (a.shape[1] % block_x != 0),
-            a.shape[0] / block_y + (a.shape[0] % block_y != 0))
+    block_y = min(a._block[0] // block_x, a.shape[1])
+    grid = (a.shape[1] // block_x + (a.shape[1] % block_x != 0),
+            a.shape[0] // block_y + (a.shape[0] % block_y != 0))
 
     hf.gpu.iadd_kernel[dtype == np.float32].prepared_async_call(
         grid, (block_x, block_y, 1), stream,
@@ -224,7 +224,7 @@ def multiply(a, b, out=None, increment=False, stream=None):
     assert a.dtype == b.dtype == out.dtype
 
     block = (min(a._block[0], a.size), 1, 1)
-    grid = (a.size / block[0] + (a.size % block[0] != 0), 1, 1)
+    grid = (a.size // block[0] + (a.size % block[0] != 0), 1, 1)
 
     hf.gpu.multiply_kernel[dtype == np.float32].prepared_async_call(
         grid, block, stream,
@@ -261,8 +261,8 @@ def shared_dot(a, b, out=None, transpose_a=False, transpose_b=False,
     # (b_shape[1], a_shape[0]), because we want the x threads aligned with
     # rows to support memory coalescing
     block_x = block_y = 32
-    grid = (b.shape[1] / block_x + (b.shape[1] % block_x != 0),
-            a.shape[0] / block_y + (a.shape[0] % block_y != 0))
+    grid = (b.shape[1] // block_x + (b.shape[1] % block_x != 0),
+            a.shape[0] // block_y + (a.shape[0] % block_y != 0))
 
     hf.gpu.m_dot_kernel[dtype == np.float32
                         ][transpose_a][transpose_b].prepared_async_call(
