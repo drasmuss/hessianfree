@@ -38,7 +38,7 @@ Requirements
 * python 2.7 or 3.5
 * numpy 1.9.2
 * matplotlib 1.3.1
-* optional: scipy 0.15, pycuda 2015, scikit-cuda 0.5, pytest 2.5
+* optional: scipy 0.15.1, pycuda 2015.1.3, scikit-cuda 0.5.1, pytest 2.7.0
 
 Installing PyCUDA on Windows
 ----------------------------
@@ -50,8 +50,6 @@ Assumes default installation locations, adjust as appropriate.
 1. Install ``python``, ``numpy``
 
 2. Install Visual Studio Express 2013 for Desktop (https://www.visualstudio.com/en-us/downloads/download-visual-studio-vs.aspx)
-
-   * run visual studio once to perform initial setup
 
 3. Go to ``C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin`` 
   
