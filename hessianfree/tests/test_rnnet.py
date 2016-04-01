@@ -24,8 +24,8 @@ def test_integrator(use_GPU):
 
     rnn = hf.RNNet(shape=[1, 5, 1], debug=True, use_GPU=use_GPU)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30, print_period=None)
+    rnn.run_epochs(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                   max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
@@ -51,8 +51,8 @@ def test_strucdamping(use_GPU):
                    hf.loss_funcs.StructuralDamping(0.1, optimizer=optimizer)],
         debug=True, use_GPU=use_GPU)
 
-    rnn.run_batches(inputs, targets, optimizer=optimizer,
-                    max_epochs=30, print_period=None)
+    rnn.run_epochs(inputs, targets, optimizer=optimizer,
+                   max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
@@ -73,8 +73,8 @@ def test_continuous(use_GPU):
     rnn = hf.RNNet(shape=[1, 5, 1], layers=[Linear(), nl, Logistic()],
                    debug=True, use_GPU=use_GPU)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30, print_period=None)
+    rnn.run_epochs(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                   max_epochs=30, print_period=None)
 
     outputs = rnn.forward(inputs, rnn.W)
 
@@ -103,8 +103,8 @@ def test_asym_dact(use_GPU):
 
     rnn = hf.RNNet(shape=[1, 5, 1], layers=Roll(), debug=True, use_GPU=use_GPU)
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=30, print_period=None)
+    rnn.run_epochs(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                   max_epochs=30, print_period=None)
 
 
 def test_plant(use_GPU):
@@ -212,8 +212,8 @@ def test_plant(use_GPU):
         shape=[2, 16, 2], layers=[Linear(), Tanh(), plant],
         W_init_params={"coeff": 0.1}, W_rec_params={"coeff": 0.1},
         use_GPU=use_GPU, debug=True)
-    rnn.run_batches(plant, None, HessianFree(CG_iter=20, init_damping=10),
-                    max_epochs=10, print_period=None)
+    rnn.run_epochs(plant, None, HessianFree(CG_iter=20, init_damping=10),
+                   max_epochs=10, print_period=None)
 
 
 def test_truncation(use_GPU):
@@ -226,8 +226,8 @@ def test_truncation(use_GPU):
     rnn = hf.RNNet(shape=[1, 8, 1], debug=True, use_GPU=use_GPU,
                    truncation=(3, 3))
 
-    rnn.run_batches(inputs, targets, optimizer=HessianFree(CG_iter=100),
-                    max_epochs=10, print_period=None)
+    rnn.run_epochs(inputs, targets, optimizer=HessianFree(CG_iter=100),
+                   max_epochs=10, print_period=None)
 
 
 if __name__ == "__main__":

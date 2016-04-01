@@ -25,13 +25,13 @@ def xor(use_hf=True):
     ff = hf.FFNet([2, 5, 1])
 
     if use_hf:
-        ff.run_batches(inputs, targets,
-                       optimizer=hf.opt.HessianFree(CG_iter=2),
-                       max_epochs=40, plotting=True)
+        ff.run_epochs(inputs, targets,
+                      optimizer=hf.opt.HessianFree(CG_iter=2),
+                      max_epochs=40, plotting=True)
     else:
         # using gradient descent (for comparison)
-        ff.run_batches(inputs, targets, optimizer=hf.opt.SGD(l_rate=1),
-                       max_epochs=10000, plotting=True)
+        ff.run_epochs(inputs, targets, optimizer=hf.opt.SGD(l_rate=1),
+                      max_epochs=10000, plotting=True)
 
     outputs = ff.forward(inputs)[-1]
     for i in range(4):
@@ -51,8 +51,8 @@ def crossentropy():
                                      hf.nl.Softmax()],
                   loss_type=hf.loss_funcs.CrossEntropy())
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, plotting=True)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                  max_epochs=40, plotting=True)
 
     outputs = ff.forward(inputs)[-1]
     for i in range(4):
@@ -71,8 +71,8 @@ def connections():
     ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(),
                   conns={0: [1, 2], 1: [2, 3], 2: [3]})
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, plotting=True)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                  max_epochs=40, plotting=True)
 
     outputs = ff.forward(inputs)[-1]
     for i in range(4):
@@ -89,11 +89,16 @@ def mnist(model_args=None, run_args=None):
 
     :param dict model_args: kwargs that will be passed to the :class:`.FFNet`
         constructor
-    :param dict run_args: kwargs that will be passed to :meth:`.run_batches`
+    :param dict run_args: kwargs that will be passed to :meth:`.run_epochs`
     """
 
     with open("mnist.pkl", "rb") as f:
-        train, _, test = pickle.load(f)
+        try:
+            train, _, test = pickle.load(f)
+        except UnicodeDecodeError:
+            # python 3
+            with open("mnist.pkl", "rb") as f2:
+                train, _, test = pickle.load(f2, encoding="bytes")
 
     if model_args is None:
         ff = hf.FFNet([28 * 28, 1024, 512, 256, 32, 10],
@@ -117,19 +122,19 @@ def mnist(model_args=None, run_args=None):
     test = (test[0], tmp)
 
     if run_args is None:
-        ff.run_batches(inputs, targets,
-                       optimizer=hf.opt.HessianFree(CG_iter=250,
-                                                    init_damping=45),
-                       batch_size=7500, test=test, max_epochs=1000,
-                       test_err=hf.loss_funcs.ClassificationError(),
-                       plotting=True)
+        ff.run_epochs(inputs, targets,
+                      optimizer=hf.opt.HessianFree(CG_iter=250,
+                                                   init_damping=45),
+                      minibatch_size=7500, test=test, max_epochs=125,
+                      test_err=hf.loss_funcs.ClassificationError(),
+                      plotting=True)
     else:
         CG_iter = run_args.pop("CG_iter", 250)
         init_damping = run_args.pop("init_damping", 45)
-        ff.run_batches(inputs, targets,
-                       optimizer=hf.opt.HessianFree(CG_iter, init_damping),
-                       test=test, test_err=hf.loss_funcs.ClassificationError(),
-                       **run_args)
+        ff.run_epochs(inputs, targets,
+                      optimizer=hf.opt.HessianFree(CG_iter, init_damping),
+                      test=test, test_err=hf.loss_funcs.ClassificationError(),
+                      **run_args)
 
     output = ff.forward(test[0])
     print("classification error",
@@ -142,7 +147,7 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
 
     :param dict model_args: kwargs that will be passed to the :class:`.RNNet`
         constructor
-    :param dict run_args: kwargs that will be passed to :meth:`.run_batches`
+    :param dict run_args: kwargs that will be passed to :meth:`.run_epochs`
     :param int n_inputs: size of batch to train on
     :param int sig_len: number of timesteps to run for
     :param bool plots: display plots of trained output
@@ -164,15 +169,15 @@ def integrator(model_args=None, run_args=None, n_inputs=15, sig_len=10,
         rnn = hf.RNNet(**model_args)
 
     if run_args is None:
-        rnn.run_batches(inputs, targets,
-                        optimizer=hf.opt.HessianFree(CG_iter=100),
-                        test=test, max_epochs=30, plotting=plots)
+        rnn.run_epochs(inputs, targets,
+                       optimizer=hf.opt.HessianFree(CG_iter=100),
+                       test=test, max_epochs=30, plotting=plots)
     else:
         CG_iter = run_args.pop("CG_iter", 100)
         init_damping = run_args.pop("init_damping", 1)
-        rnn.run_batches(inputs, targets,
-                        optimizer=hf.opt.HessianFree(CG_iter, init_damping),
-                        test=test, plotting=plots, **run_args)
+        rnn.run_epochs(inputs, targets,
+                       optimizer=hf.opt.HessianFree(CG_iter, init_damping),
+                       test=test, plotting=plots, **run_args)
 
     if plots:
         plt.figure()
@@ -199,7 +204,7 @@ def adding(T=50, plots=True):
     """
 
     # set up inputs
-    N = 100000
+    N = 10000
     test_cut = int(N * 0.9)
 
     vals = np.random.uniform(0, 1, size=(N, T, 1)).astype(np.float32)
@@ -235,10 +240,10 @@ def adding(T=50, plots=True):
     W, _ = rnn.get_weights(rnn.W, (2, 2))
     W *= 1.0 / np.max(np.abs(np.linalg.eigvals(W)))
 
-    rnn.run_batches(inputs[:test_cut], targets[:test_cut],
-                    optimizer=optimizer, batch_size=1024, test=test,
-                    max_epochs=50, plotting=plots,
-                    test_err=hf.loss_funcs.SquaredError())
+    rnn.run_epochs(inputs[:test_cut], targets[:test_cut],
+                   optimizer=optimizer, minibatch_size=1024, test=test,
+                   max_epochs=5, plotting=plots,
+                   test_err=hf.loss_funcs.SquaredError())
 
     if plots:
         outputs = rnn.forward(inputs[:20])
@@ -362,14 +367,14 @@ def plant(plots=True):
                    W_init_params={"coeff": 0.1}, W_rec_params={"coeff": 0.1},
                    rng=np.random.RandomState(0))
 
-    rnn.run_batches(plant, None, hf.opt.HessianFree(CG_iter=20,
-                                                    init_damping=10),
-                    max_epochs=150, plotting=plots)
+    rnn.run_epochs(plant, None, hf.opt.HessianFree(CG_iter=20,
+                                                   init_damping=10),
+                   max_epochs=150, plotting=plots)
 
     # using gradient descent (for comparison)
-#     rnn.run_batches(plant, None, optimizer=SGD(l_rate=0.01),
-#                     batch_size=None, test=test, max_epochs=10000,
-#                     plotting=True)
+    #     rnn.run_epochs(plant, None, optimizer=SGD(l_rate=0.01),
+    #                     minibatch_size=None, test=test, max_epochs=10000,
+    #                     plotting=True)
 
     if plots:
         outputs = rnn.forward(plant)[-1]
@@ -385,7 +390,7 @@ def plant(plots=True):
         plt.show()
 
 
-def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
+def profile(func, max_epochs=1, use_GPU=False, cprofile=True):
     """Run a profiler on the code.
 
     :param str func: the demo function to be profiled (can be 'mnist' or
@@ -405,8 +410,8 @@ def profile(func, max_epochs=15, use_GPU=False, cprofile=True):
 
     if func == "mnist":
         mnist({'use_GPU': use_GPU, 'rng': np.random.RandomState(0)},
-              {'max_epochs': max_epochs, 'plotting': False, 'batch_size': 7500,
-               'CG_iter': 10})
+              {'max_epochs': max_epochs, 'plotting': False,
+               'minibatch_size': 7500, 'CG_iter': 10})
     elif func == "integrator":
         integrator({'shape': [1, 100, 1], 'layers': hf.nl.Logistic(),
                     'use_GPU': use_GPU, 'debug': False,

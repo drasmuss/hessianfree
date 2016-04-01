@@ -24,7 +24,7 @@ The ``xor`` function is the most basic test of a multi-layer neural network
 function with the form
 
 ====== ====== ======
-    Input     Output   
+    Input     Output
 ============= ======
 0      0      0
 0      1      1
@@ -41,7 +41,7 @@ This demo illustrates the two key functions used when training a network:
 
 * the :class:`.FFNet` (or :class:`.RNNet`) constructor is used to set up the
   structure of the network to be optimized
-* the :meth:`~.FFNet.run_batches()` function executes the optimization process 
+* the :meth:`~.FFNet.run_epochs()` function executes the optimization process
   on that network
 
 The :meth:`~.FFNet.forward()` function seen at the end of the demo is also 
@@ -121,15 +121,15 @@ to run.
 
 This demo also illustrates some of the important parameters of the optimization
 process, which the user may want to adjust when training a network.  These are
-the arguments to the :meth:`~.FFNet.run_batches` function:
+the arguments to the :meth:`~.FFNet.run_epochs` function:
 
 .. code:: python
 
-  ff.run_batches(inputs, targets,
-                 optimizer=hf.opt.HessianFree(CG_iter=250, init_damping=45),
-                 batch_size=7500, test=test, max_epochs=1000,
-                 test_err=hf.loss_funcs.ClassificationError(),
-                 plotting=True)
+  ff.run_epochs(inputs, targets,
+                optimizer=hf.opt.HessianFree(CG_iter=250, init_damping=45),
+                minibatch_size=7500, test=test, max_epochs=125,
+                test_err=hf.loss_funcs.ClassificationError(),
+                plotting=True)
 
 The key parameters here are:
 
@@ -148,7 +148,7 @@ The key parameters here are:
   indicating that the quadratic approximation is poor, the damping needs to be
   increased.  Setting it too high will just cause the initial training progress
   to be slow.
-* ``batch_size``: specifies the size of the mini-batch used each epoch.
+* ``minibatch_size``: specifies the size of the mini-batch used each epoch.
   Hessian-free optimization uses much larger batch sizes than you would
   typically see in SGD, but will use dramatically fewer training epochs
   overall.  So don't be skimpy on the batch size.
@@ -301,8 +301,8 @@ nonlinearity object defined above as the plant, so it will both act as a layer
 in the network and generate inputs.  This is often a useful way to implement a
 plant, but not a necessary one -- the plant could be defined as a completely
 separate object.  We use the plant by passing it to the ``inputs`` parameter
-in the :meth:`~.FFNet.run_batches` function.  The plant also defines the 
-targets, so we pass ``None`` for the targets.  
+in the :meth:`~.FFNet.run_epochs` function.  The plant also defines the
+targets, so we pass ``None`` for the targets.
 
 The plant we have defined in this case is a 1D system with a position and
 velocity.  The output of the neural network acts on the plant by changing

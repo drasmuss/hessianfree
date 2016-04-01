@@ -168,10 +168,10 @@ class FFNet(object):
 
         self.use_GPU = use_GPU
 
-    def run_batches(self, inputs, targets, optimizer,
-                    max_epochs=1000, batch_size=None, test=None, test_err=None,
-                    target_err=1e-6, plotting=False,
-                    file_output=None, print_period=10):
+    def run_epochs(self, inputs, targets, optimizer,
+                   max_epochs=100, minibatch_size=None, test=None,
+                   test_err=None, target_err=1e-6, plotting=False,
+                   file_output=None, print_period=10):
         """Apply the given optimizer with a sequence of (mini)batches.
 
         :param inputs: input vectors (or a :class:`~.nonlinearities.Plant` that
@@ -184,7 +184,7 @@ class FFNet(object):
         :param optimizer: computes the weight update each epoch (see
             optimizers.py)
         :param int max_epochs: the maximum number of epochs to run
-        :param int batch_size: the size of the minibatch to use in each epoch
+        :param int minibatch_size: the size of the minibatch to use in each epoch
             (or None to use full batches)
         :param tuple test: tuple of (inputs,targets) to use as the test data
             (if None then the same inputs and targets as training will be used)
@@ -205,6 +205,7 @@ class FFNet(object):
         self.best_W = None
         self.best_error = None
         prefix = "HF" if file_output is None else file_output
+        minibatch_size = minibatch_size or inputs.shape[0]
         plots = defaultdict(list)
         self.optimizer = optimizer
 
@@ -215,44 +216,49 @@ class FFNet(object):
 
             if printing:
                 print("=" * 40)
-                print("batch", i)
+                print("epoch", i)
 
-            # generate minibatch and cache activations
-            self.cache_minibatch(inputs, targets, batch_size)
+            # run minibatches
+            indices = self.rng.permutation(inputs.shape[0])
+            for start in range(0, inputs.shape[0], minibatch_size):
+                # generate minibatch and cache activations
+                self.cache_minibatch(
+                    inputs, targets, indices[start:start + minibatch_size])
 
-            # validity checks
-            if self.inputs.shape[-1] != self.shape[0]:
-                raise ValueError("Input dimension (%d) does not match number "
-                                 "of input nodes (%d)" %
-                                 (self.inputs.shape[-1], self.shape[0]))
-            if self.targets.shape[-1] != self.shape[-1]:
-                raise ValueError("Target dimension (%d) does not match number "
-                                 "of output nodes (%d)" %
-                                 (self.targets.shape[-1], self.shape[-1]))
+                # validity checks
+                if self.inputs.shape[-1] != self.shape[0]:
+                    raise ValueError(
+                        "Input dimension (%d) does not match number of input "
+                        "nodes (%d)" % (self.inputs.shape[-1], self.shape[0]))
+                if self.targets.shape[-1] != self.shape[-1]:
+                    raise ValueError(
+                        "Target dimension (%d) does not match number of "
+                        "output nodes (%d)" % (self.targets.shape[-1],
+                                               self.shape[-1]))
 
-            assert self.activations[-1].dtype == self.dtype
+                assert self.activations[-1].dtype == self.dtype
 
-            # compute update
-            update = optimizer.compute_update(printing)
+                # compute update
+                update = optimizer.compute_update(printing)
 
-            assert update.dtype == self.dtype
+                assert update.dtype == self.dtype
 
-            # apply mask
-            if self.mask is not None:
-                update[self.mask] = 0
+                # apply mask
+                if self.mask is not None:
+                    update[self.mask] = 0
 
-            # update weights
-            self.W += update
+                # update weights
+                self.W += update
 
-            # invalidate cached activations (shouldn't be necessary,
-            # but doesn't hurt)
-            self.activations = None
-            self.d_activations = None
-            self.GPU_activations = None
+                # invalidate cached activations (shouldn't be necessary,
+                # but doesn't hurt)
+                self.activations = None
+                self.d_activations = None
+                self.GPU_activations = None
 
             # compute test error
             if test is None:
-                test_in, test_t = self.inputs, self.targets
+                test_in, test_t = inputs, targets
             else:
                 test_in, test_t = test[0], test[1]
 
@@ -292,7 +298,7 @@ class FFNet(object):
                 if print_period is not None:
                     print("target error reached")
                 break
-            if test is not None and i > 20 and test_errs[-20] < test_errs[-1]:
+            if test is not None and i > 10 and test_errs[-10] < test_errs[-1]:
                 if print_period is not None:
                     print("overfitting detected, terminating")
                 break
@@ -370,7 +376,7 @@ class FFNet(object):
 
         # get outputs
         if (W is self.W and inputs is self.inputs and
-                self.activations is not None):
+                    self.activations is not None):
             # use cached activations
             activations = self.activations
         else:
@@ -392,22 +398,17 @@ class FFNet(object):
 
         return error
 
-    def cache_minibatch(self, inputs, targets, batch_size=None):
+    def cache_minibatch(self, inputs, targets, minibatch=None):
         """Pick a subset of inputs and targets to use in minibatch, and cache
         the activations for that minibatch."""
 
-        batch_size = inputs.shape[0] if batch_size is None else batch_size
+        if minibatch is None:
+            minibatch = np.arange(inputs.shape[0])
 
         if not isinstance(inputs, hf.nl.Plant):
             # inputs/targets are vectors
-
-            indices = np.arange(len(inputs))
-            if batch_size < len(inputs):
-                # select a subset
-                indices = self.rng.choice(indices, size=batch_size,
-                                          replace=False)
-            self.inputs = inputs[indices]
-            self.targets = targets[indices]
+            self.inputs = inputs[minibatch]
+            self.targets = targets[minibatch]
 
             # cache activations
             self.activations, self.d_activations = self.forward(self.inputs,
@@ -421,7 +422,7 @@ class FFNet(object):
                                  "generate targets itself)")
 
             # run plant to generate batch
-            inputs.shape[0] = batch_size
+            inputs.shape[0] = len(minibatch)
             self.activations, self.d_activations = self.forward(inputs, self.W,
                                                                 deriv=True)
             self.inputs, self.targets = inputs.get_vecs()
@@ -851,9 +852,8 @@ class FFNet(object):
 
             # sanity checks
             if (isinstance(t, hf.loss_funcs.CrossEntropy) and
-                np.any(self.layers[-1].activation(np.linspace(-80, 80,
-                                                              100)[None, :]) <=
-                       0)):
+                    np.any(self.layers[-1].activation(
+                        np.linspace(-80, 80, 100)[None, :]) <= 0)):
                 # this won't catch everything, but hopefully a useful warning
                 raise ValueError("Must use positive activation function "
                                  "with cross-entropy error")
@@ -867,8 +867,8 @@ class FFNet(object):
         else:
             self.loss = loss_type
 
-    def _run_batch(self, inputs, targets, batch_size=None):
-        """A stripped down version of run_batches that just does the update
+    def _run_epoch(self, inputs, targets, minibatch_size=None):
+        """A stripped down version of run_epochs that just does the update
         without any overhead.
 
         Can be used for optimizers where the cost to compute an update is
@@ -877,11 +877,15 @@ class FFNet(object):
         non-negligible.
         """
 
-        # generate minibatch and cache activations
-        self.cache_minibatch(inputs, targets, batch_size)
+        minibatch_size = minibatch_size or inputs.shape[0]
+        indices = self.rng.permutation(inputs.shape[0])
+        for start in range(0, inputs.shape[0], minibatch_size):
+            # generate minibatch and cache activations
+            self.cache_minibatch(
+                inputs, targets, indices[start:start + minibatch_size])
 
-        # compute update
-        self.W += self.optimizer.compute_update(False)
+            # compute update
+            self.W += self.optimizer.compute_update(False)
 
     @property
     def optimizer(self):

@@ -72,8 +72,8 @@ class RNNet(hf.FFNet):
             stateful nonlinearities
         """
 
-        # input shape = [batch_size, seq_len, input_dim]
-        # activations shape = [n_layers, batch_size, seq_len, layer_size]
+        # input shape = [minibatch_size, seq_len, input_dim]
+        # activations shape = [n_layers, minibatch_size, seq_len, layer_size]
 
         params = self.W if params is None else params
 

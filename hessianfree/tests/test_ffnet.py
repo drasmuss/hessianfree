@@ -13,8 +13,8 @@ def test_xor(use_GPU):
 
     ff = hf.FFNet([2, 5, 1], debug=True, use_GPU=use_GPU)
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                  max_epochs=40, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -27,8 +27,8 @@ def test_SGD(use_GPU):
 
     ff = hf.FFNet([2, 5, 1], debug=False, use_GPU=use_GPU)
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.SGD(l_rate=1),
-                   max_epochs=10000, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.SGD(l_rate=1),
+                  max_epochs=10000, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -43,8 +43,8 @@ def test_softlif(use_GPU):
 
     ff = hf.FFNet([2, 10, 1], layers=lifs, debug=True, use_GPU=use_GPU)
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
-                   max_epochs=50, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
+                  max_epochs=50, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -61,8 +61,8 @@ def test_crossentropy(use_GPU):
                   debug=True, loss_type=hf.loss_funcs.CrossEntropy(),
                   use_GPU=use_GPU)
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
-                   max_epochs=100, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
+                  max_epochs=100, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -80,9 +80,9 @@ def test_testerr(use_GPU):
 
     err = hf.loss_funcs.ClassificationError()
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
-                   max_epochs=100, test_err=err, target_err=-1,
-                   print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
+                  max_epochs=100, test_err=err, target_err=-1,
+                  print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -97,8 +97,8 @@ def test_connections(use_GPU):
     ff = hf.FFNet([2, 5, 5, 1], layers=hf.nl.Tanh(), debug=True,
                   conns={0: [1, 2], 1: [3], 2: [3]}, use_GPU=use_GPU)
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
-                   max_epochs=50, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
+                  max_epochs=50, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -113,8 +113,8 @@ def test_sparsity(use_GPU):
                   loss_type=[hf.loss_funcs.SquaredError(),
                              hf.loss_funcs.SparseL2(0.01, target=0)])
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
-                   max_epochs=100, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=50),
+                  max_epochs=100, print_period=None)
 
     outputs = ff.forward(inputs, ff.W)
 
@@ -138,8 +138,8 @@ def test_asym_dact(use_GPU):
 
     ff = hf.FFNet([2, 5, 1], layers=Roll(), debug=True, use_GPU=use_GPU)
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=40, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                  max_epochs=40, print_period=None)
 
 
 def test_stripped_batch(use_GPU):
@@ -149,13 +149,13 @@ def test_stripped_batch(use_GPU):
     ff = hf.FFNet([2, 5, 1], debug=True, use_GPU=use_GPU)
     W_copy = ff.W.copy()
 
-    ff.run_batches(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
-                   max_epochs=20, print_period=None)
+    ff.run_epochs(inputs, targets, optimizer=hf.opt.HessianFree(CG_iter=2),
+                  max_epochs=20, print_period=None)
 
     ff2 = hf.FFNet([2, 5, 1], debug=True, use_GPU=use_GPU, load_weights=W_copy)
     ff2.optimizer = hf.opt.HessianFree(CG_iter=2)
     for _ in range(20):
-        ff2._run_batch(inputs, targets)
+        ff2._run_epoch(inputs, targets)
 
     assert np.allclose(ff.forward(inputs)[-1], ff2.forward(inputs)[-1])
 

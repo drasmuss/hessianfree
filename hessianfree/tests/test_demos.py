@@ -22,9 +22,9 @@ def test_standard():
 @pytest.mark.parametrize("use_GPU", use_GPU)
 def test_mnist(use_GPU):
     demos.mnist(model_args={"use_GPU": use_GPU},
-                run_args={"batch_size": 100, "max_epochs": 5})
+                run_args={"minibatch_size": 7500, "max_epochs": 1})
 
-    demos.profile("mnist", max_epochs=2, use_GPU=use_GPU)
+    demos.profile("mnist", max_epochs=1, use_GPU=use_GPU)
 
 
 @pytest.mark.skipif(not hf.gpu_enabled, reason="GPU packages not installed")
