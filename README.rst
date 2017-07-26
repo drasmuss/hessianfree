@@ -10,10 +10,6 @@
   :target: https://pypi.python.org/pypi/hessianfree
   :alt: Latest PyPI version
 
-.. image:: https://img.shields.io/pypi/dm/hessianfree.svg
-  :target: https://pypi.python.org/pypi/hessianfree
-  :alt: Number of PyPI downloads
-
 *******************************************
 Hessian-free optimization for deep networks
 *******************************************
