@@ -539,8 +539,9 @@ class FFNet(object):
                 np.dot(self.activations[i].T, deltas[post], out=W_grad)
                 np.sum(deltas[post], axis=0, out=b_grad)
 
-            self.J_dot(self.d_activations[i], error[i], transpose_J=True,
-                       out=deltas[i])
+            if i > 0:
+                self.J_dot(self.d_activations[i], error[i], transpose_J=True,
+                           out=deltas[i])
 
         grad /= self.inputs.shape[0]
 
@@ -618,8 +619,9 @@ class FFNet(object):
                 np.dot(self.activations[i].T, R_error[post], out=W_g)
                 np.sum(R_error[post], axis=0, out=b_g)
 
-            self.J_dot(self.d_activations[i], R_error[i],
-                       out=R_error[i], transpose_J=True)
+            if i > 0:
+                self.J_dot(self.d_activations[i], R_error[i],
+                           out=R_error[i], transpose_J=True)
 
         Gv /= len(self.inputs)
 
@@ -683,8 +685,9 @@ class FFNet(object):
 
                 hf.gpu.sum_cols(R_error[post], out=b_g)
 
-            hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i], out=R_error[i],
-                         transpose_J=True)
+            if i > 0:
+                hf.gpu.J_dot(self.GPU_d_activations[i], R_error[i],
+                             out=R_error[i], transpose_J=True)
 
         # Tikhonov damping and batch mean
         Gv._axpbyz(1.0 / len(self.inputs), GPU_v, damping, Gv)
